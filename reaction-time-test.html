@@ -1,0 +1,1180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="mobile-web-app-capable" content="yes">
+    <title>Reaction Time Test</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            overflow-x: hidden;
+        }
+
+        :root {
+            --bg-dark: #0a0e27;
+            --bg-red: #dc2626;
+            --bg-green: #16a34a;
+            --text-light: #f8fafc;
+            --text-muted: #94a3b8;
+            --accent: #fbbf24;
+            --shadow: rgba(0, 0, 0, 0.3);
+        }
+
+        body {
+            font-family: 'DM Sans', sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-light);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            overflow-x: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+        }
+
+        #game-container {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            position: relative;
+            overflow-x: hidden;
+            /* Performance optimizations for instant color changes */
+            will-change: background-color;
+            transform: translateZ(0);
+            backface-visibility: hidden;
+            /* Eliminate touch delays on mobile */
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        #game-container.waiting {
+            background: var(--bg-red);
+        }
+
+        #game-container.ready {
+            background: var(--bg-green);
+            cursor: pointer;
+        }
+
+        #content {
+            text-align: center;
+            max-width: 600px;
+            padding: 2rem;
+            max-height: 100vh;
+            overflow-y: auto;
+            overflow-x: hidden;
+            pointer-events: all;
+        }
+
+        h1 {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 3.5rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            letter-spacing: -0.02em;
+            animation: fadeIn 0.6s ease;
+            white-space: nowrap;
+        }
+
+        .subtitle {
+            font-size: 1.5rem;
+            color: var(--text-muted);
+            margin-bottom: 2rem;
+            animation: fadeIn 0.6s ease 0.1s backwards;
+        }
+
+        .instruction {
+            font-size: 1.3rem;
+            line-height: 1.6;
+            color: var(--text-muted);
+            margin-bottom: 1.5rem;
+            animation: fadeIn 0.6s ease 0.2s backwards;
+        }
+
+        .result-display {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 6rem;
+            font-weight: 700;
+            color: var(--accent);
+            margin: 2rem 0;
+            animation: scaleIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        .result-label {
+            font-size: 1.2rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-muted);
+        }
+
+        #stats-container {
+            margin-top: 2rem;
+            animation: fadeIn 0.6s ease 0.3s backwards;
+            pointer-events: all;
+        }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.75rem 1.5rem;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            margin-bottom: 0.5rem;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .stat-label {
+            color: var(--text-muted);
+        }
+
+        .stat-value {
+            color: var(--accent);
+            font-weight: 700;
+        }
+
+        #attempts-list {
+            margin-top: 2rem;
+            max-height: 200px;
+            overflow-y: auto;
+            animation: fadeIn 0.6s ease 0.4s backwards;
+            pointer-events: all;
+        }
+
+        .attempt-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.5rem 1rem;
+            background: rgba(255, 255, 255, 0.03);
+            border-left: 3px solid var(--accent);
+            margin-bottom: 0.25rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+        }
+
+        .button-group {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1rem;
+            margin-top: 2rem;
+            pointer-events: all;
+            animation: fadeIn 0.6s ease 0.5s backwards;
+        }
+
+        button {
+            font-family: 'DM Sans', sans-serif;
+            padding: 1rem 2.5rem;
+            font-size: 1.1rem;
+            font-weight: 500;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            pointer-events: all;
+            width: 100%;
+            max-width: 400px;
+            margin: 0 auto;
+        }
+
+        input[type="text"] {
+            pointer-events: all;
+        }
+
+        button.primary {
+            background: var(--accent);
+            color: var(--bg-dark);
+        }
+
+        button.primary:hover {
+            background: #f59e0b;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px var(--shadow);
+        }
+
+        button.secondary {
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-light);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        button.secondary:hover {
+            background: rgba(255, 255, 255, 0.15);
+            transform: translateY(-2px);
+        }
+
+        button.share-btn {
+            background: rgba(34, 211, 238, 0.15);
+            color: #67e8f9;
+            border: 1px solid rgba(34, 211, 238, 0.3);
+        }
+
+        button.share-btn:hover {
+            background: rgba(34, 211, 238, 0.25);
+            border-color: rgba(34, 211, 238, 0.4);
+            transform: translateY(-2px);
+        }
+
+        .warning-text {
+            color: var(--text-light);
+            font-size: 2.5rem;
+            font-weight: 500;
+        }
+
+        .too-soon {
+            color: #ef4444;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes scaleIn {
+            from {
+                opacity: 0;
+                transform: scale(0.8);
+            }
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+
+        /* Custom scrollbar */
+        #attempts-list::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        #attempts-list::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+        }
+
+        #attempts-list::-webkit-scrollbar-thumb {
+            background: var(--accent);
+            border-radius: 4px;
+        }
+
+        #content::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        #content::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+        }
+
+        #content::-webkit-scrollbar-thumb {
+            background: var(--accent);
+            border-radius: 4px;
+        }
+
+        /* Session cards */
+        .session-card {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+            transition: all 0.2s ease;
+            pointer-events: all;
+        }
+
+        .session-card:hover {
+            background: rgba(255, 255, 255, 0.08);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        .session-card.current {
+            border: 2px solid var(--accent);
+            background: rgba(251, 191, 36, 0.05);
+        }
+
+        .session-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .session-name {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: var(--text-light);
+        }
+
+        .current-badge {
+            display: inline-block;
+            background: var(--accent);
+            color: var(--bg-dark);
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 700;
+            margin-left: 0.5rem;
+        }
+
+        .session-date {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+        }
+
+        .session-stats {
+            display: flex;
+            gap: 2rem;
+            margin-bottom: 1rem;
+        }
+
+        .session-stat {
+            text-align: center;
+        }
+
+        .session-stat-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--accent);
+        }
+
+        .session-stat-label {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .session-actions {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .small-btn {
+            font-family: 'DM Sans', sans-serif;
+            padding: 0.5rem 1rem;
+            font-size: 0.9rem;
+            font-weight: 500;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-light);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            width: 100%;
+            max-width: 400px;
+            margin: 0 auto;
+        }
+
+        .small-btn:hover {
+            background: rgba(255, 255, 255, 0.15);
+            transform: translateY(-1px);
+        }
+
+        .small-btn.delete {
+            background: rgba(220, 38, 38, 0.2);
+            border-color: rgba(220, 38, 38, 0.4);
+        }
+
+        .small-btn.delete:hover {
+            background: rgba(220, 38, 38, 0.3);
+        }
+
+        /* Compact session cards */
+        .session-card-compact {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 0.75rem;
+            margin-bottom: 0.5rem;
+            transition: all 0.2s ease;
+            pointer-events: all;
+        }
+
+        .session-card-compact:hover {
+            background: rgba(255, 255, 255, 0.08);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        .session-card-compact.current {
+            border: 2px solid var(--accent);
+            background: rgba(251, 191, 36, 0.05);
+        }
+
+        .session-header-compact {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 0.5rem;
+            gap: 0.5rem;
+        }
+
+        .session-name-compact {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.95rem;
+            font-weight: 700;
+            color: var(--text-light);
+        }
+
+        .current-badge-compact {
+            display: inline-block;
+            background: var(--accent);
+            color: var(--bg-dark);
+            padding: 0.15rem 0.4rem;
+            border-radius: 3px;
+            font-size: 0.6rem;
+            font-weight: 700;
+            margin-left: 0.4rem;
+        }
+
+        .session-date-compact {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            white-space: nowrap;
+        }
+
+        .session-stats-compact {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 0.5rem;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        .stat-compact strong {
+            color: var(--accent);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .session-actions-compact {
+            display: flex;
+            gap: 0.4rem;
+            flex-wrap: wrap;
+        }
+
+        .action-btn {
+            font-family: 'DM Sans', sans-serif;
+            padding: 0.35rem 0.75rem;
+            font-size: 0.8rem;
+            font-weight: 500;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-light);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .action-btn:hover {
+            background: rgba(255, 255, 255, 0.15);
+            transform: translateY(-1px);
+        }
+
+        .action-btn.delete {
+            background: rgba(220, 38, 38, 0.2);
+            border-color: rgba(220, 38, 38, 0.4);
+        }
+
+        .action-btn.delete:hover {
+            background: rgba(220, 38, 38, 0.3);
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateX(-50%) translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(-50%) translateY(0);
+            }
+        }
+
+        #sessions-list::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        #sessions-list::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+        }
+
+        #sessions-list::-webkit-scrollbar-thumb {
+            background: var(--accent);
+            border-radius: 4px;
+        }
+
+        #sessions-list {
+            pointer-events: all;
+        }
+
+        @media (max-width: 768px) {
+            h1 {
+                font-size: 2.5rem;
+            }
+
+            .result-display {
+                font-size: 4.5rem;
+            }
+
+            .warning-text {
+                font-size: 3rem;
+            }
+
+            .session-stats {
+                gap: 1rem;
+            }
+
+            .session-stat-value {
+                font-size: 1.2rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <div id="content">
+            <!-- Content will be dynamically updated -->
+        </div>
+    </div>
+
+    <script>
+        class ReactionTimeTest {
+            constructor() {
+                this.state = 'idle'; // idle, waiting, ready, result, summary, sessions
+                this.startTime = null;
+                this.timeout = null;
+                this.currentSessionId = null;
+                this.sessions = this.loadSessions();
+                this.container = document.getElementById('game-container');
+                this.content = document.getElementById('content');
+                
+                this.init();
+            }
+
+            loadSessions() {
+                const saved = localStorage.getItem('reactionSessions');
+                return saved ? JSON.parse(saved) : {};
+            }
+
+            saveSessions() {
+                localStorage.setItem('reactionSessions', JSON.stringify(this.sessions));
+            }
+
+            getCurrentSession() {
+                return this.sessions[this.currentSessionId] || null;
+            }
+
+            init() {
+                // Check if there's a saved current session
+                const savedSessionId = localStorage.getItem('currentSessionId');
+                if (savedSessionId && this.sessions[savedSessionId]) {
+                    this.currentSessionId = savedSessionId;
+                } else if (!this.currentSessionId) {
+                    // Start with a temporary session for immediate testing
+                    this.currentSessionId = 'temp';
+                    if (!this.sessions['temp']) {
+                        this.sessions['temp'] = {
+                            id: 'temp',
+                            name: 'Unsaved Session',
+                            created: new Date().toISOString(),
+                            reactionTimes: [],
+                            isTemp: true
+                        };
+                    }
+                }
+                
+                this.showInstructions();
+                
+                // Use mousedown for lowest possible latency
+                this.container.addEventListener('mousedown', (e) => {
+                    this.handleClick(e);
+                });
+                
+                // Touch events for mobile (even lower latency)
+                this.container.addEventListener('touchstart', (e) => {
+                    e.preventDefault(); // Prevent mouse events from firing
+                    this.handleClick(e);
+                }, { passive: false });
+            }
+
+            handleClick(e) {
+                // CRITICAL: Capture timestamp IMMEDIATELY before any checks
+                const clickTime = performance.now();
+                
+                // Prevent clicks on buttons, inputs, and interactive elements
+                if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') {
+                    return;
+                }
+
+                // Prevent clicks on stats/attempts area from triggering test
+                if (e.target.closest('#stats-container') || 
+                    e.target.closest('#attempts-list') || 
+                    e.target.closest('.stat-row') || 
+                    e.target.closest('.attempt-item') ||
+                    e.target.closest('#sessions-list') ||
+                    e.target.closest('.session-card') ||
+                    e.target.closest('.session-card-compact')) {
+                    return;
+                }
+
+                switch(this.state) {
+                    case 'idle':
+                        this.startTest();
+                        break;
+                    case 'waiting':
+                        this.tooSoon();
+                        break;
+                    case 'ready':
+                        this.recordReaction(clickTime);
+                        break;
+                    case 'result':
+                        this.startTest();
+                        break;
+                }
+            }
+
+            createSession() {
+                const input = document.getElementById('session-name-input');
+                const sessionName = input.value.trim() || `Session ${new Date().toLocaleString()}`;
+                
+                const sessionId = Date.now().toString();
+                this.sessions[sessionId] = {
+                    id: sessionId,
+                    name: sessionName,
+                    created: new Date().toISOString(),
+                    reactionTimes: []
+                };
+                
+                this.currentSessionId = sessionId;
+                localStorage.setItem('currentSessionId', sessionId);
+                this.saveSessions();
+                this.showInstructions();
+            }
+
+            showInstructions() {
+                const session = this.getCurrentSession();
+                if (!session) {
+                    this.currentSessionId = 'temp';
+                    this.sessions['temp'] = {
+                        id: 'temp',
+                        name: 'Unsaved Session',
+                        created: new Date().toISOString(),
+                        reactionTimes: [],
+                        isTemp: true
+                    };
+                    return this.showInstructions();
+                }
+
+                this.state = 'idle';
+                this.container.className = '';
+                
+                const hasOtherSessions = Object.keys(this.sessions).filter(id => id !== 'temp').length > 0;
+                
+                this.content.innerHTML = `
+                    <h1>Reaction Time Test</h1>
+                    <p class="subtitle">${session.isTemp ? 'Test your visual reflexes' : `Session: ${session.name}`}</p>
+                    <p class="instruction">
+                        Click anywhere to start. When the screen turns <span style="color: var(--bg-red)">red</span>, 
+                        wait. When it turns <span style="color: var(--bg-green)">green</span>, click as quickly as you can!
+                    </p>
+                    ${session.reactionTimes.length > 0 ? this.renderStats() : ''}
+                    ${session.isTemp && session.reactionTimes.length === 0 ? `
+                        <div class="button-group" style="margin-top: 3rem; justify-content: center;">
+                            ${hasOtherSessions ? '<button class="secondary" onclick="test.showAllSessions()">View Sessions</button>' : ''}
+                        </div>
+                    ` : ''}
+                    ${!session.isTemp ? `
+                        <div class="button-group" style="margin-top: 2rem;">
+                            <button class="secondary" onclick="test.showAllSessions()">All Sessions</button>
+                            <button class="secondary" onclick="test.endSession()">End Session</button>
+                        </div>
+                    ` : ''}
+                `;
+            }
+
+            startTest() {
+                this.state = 'waiting';
+                this.container.className = 'waiting';
+                this.content.innerHTML = `
+                    <p class="warning-text">Wait for green...</p>
+                `;
+
+                // Random delay between 2-5 seconds
+                const delay = Math.random() * 3000 + 2000;
+                this.timeout = setTimeout(() => this.showReady(), delay);
+            }
+
+            showReady() {
+                this.state = 'ready';
+                // CRITICAL: Set startTime right before visual change for minimal latency
+                this.startTime = performance.now();
+                this.container.className = 'ready';
+                this.content.innerHTML = `
+                    <p class="warning-text">Click now!</p>
+                `;
+            }
+
+            tooSoon() {
+                clearTimeout(this.timeout);
+                this.state = 'result';
+                this.container.className = '';
+                const session = this.getCurrentSession();
+                this.content.innerHTML = `
+                    <h1>Too Soon!</h1>
+                    <p class="instruction too-soon">You clicked before the screen turned green. Try again!</p>
+                    <div class="button-group">
+                        <button class="primary" onclick="test.startTest()">Try Again</button>
+                        ${session.reactionTimes.length > 0 ? '<button class="secondary" onclick="test.showInstructions()">View Results</button>' : ''}
+                    </div>
+                `;
+            }
+
+            recordReaction(clickTime) {
+                // Calculate reaction time from pre-captured timestamps (both using performance.now())
+                const reactionTime = Math.round(clickTime - this.startTime);
+                const session = this.getCurrentSession();
+                session.reactionTimes.push(reactionTime);
+                this.saveSessions();
+                
+                this.state = 'result';
+                this.container.className = '';
+                this.content.innerHTML = `
+                    <div class="result-display">${reactionTime} ms</div>
+                    <div class="result-label">Reaction Time</div>
+                    <p class="instruction">Click to try again</p>
+                    <div class="button-group">
+                        <button class="primary" onclick="test.startTest()">Next Test</button>
+                        <button class="secondary" onclick="test.showInstructions()">View All Results</button>
+                    </div>
+                `;
+            }
+
+            renderStats() {
+                const session = this.getCurrentSession();
+                if (!session || session.reactionTimes.length === 0) return '';
+
+                const times = session.reactionTimes;
+                const avg = Math.round(times.reduce((a, b) => a + b, 0) / times.length);
+                const best = Math.min(...times);
+                const worst = Math.max(...times);
+
+                return `
+                    <div id="stats-container">
+                        <div class="stat-row">
+                            <span class="stat-label">Attempts:</span>
+                            <span class="stat-value">${times.length}</span>
+                        </div>
+                        <div class="stat-row">
+                            <span class="stat-label">Average:</span>
+                            <span class="stat-value">${avg} ms</span>
+                        </div>
+                        <div class="stat-row">
+                            <span class="stat-label">Best:</span>
+                            <span class="stat-value">${best} ms</span>
+                        </div>
+                        <div class="stat-row">
+                            <span class="stat-label">Worst:</span>
+                            <span class="stat-value">${worst} ms</span>
+                        </div>
+                    </div>
+                    <div id="attempts-list">
+                        ${times.map((time, index) => `
+                            <div class="attempt-item">
+                                <span>Attempt ${index + 1}</span>
+                                <span>${time} ms</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                    <div class="button-group">
+                        <button class="primary" onclick="test.startTest()">Continue Testing</button>
+                        <button class="share-btn" onclick="test.shareResults()">Share</button>
+                        ${session.isTemp ? `
+                            <button class="secondary" onclick="test.startNewSession()">New Session</button>
+                        ` : `
+                            <button class="secondary" onclick="test.exportSessionCSV()">Export CSV</button>
+                        `}
+                        <button class="secondary" onclick="test.showAllSessions()">Manage Sessions</button>
+                    </div>
+                `;
+            }
+
+            showAllSessions() {
+                this.state = 'sessions';
+                this.container.className = '';
+                
+                // Filter out temp session from the list
+                const sessionsList = Object.values(this.sessions)
+                    .filter(s => !s.isTemp)
+                    .sort((a, b) => new Date(b.created) - new Date(a.created));
+
+                this.content.innerHTML = `
+                    <h1 style="font-size: 2rem; margin-bottom: 0.5rem;">Session Manager</h1>
+                    <p class="subtitle" style="font-size: 0.95rem; margin-bottom: 1rem;">${sessionsList.length} session${sessionsList.length !== 1 ? 's' : ''} saved</p>
+                    
+                    ${sessionsList.length > 0 ? `
+                        <div style="margin: 1rem 0;">
+                            <input type="text" id="session-search" placeholder="Search sessions..." 
+                                style="width: 100%; max-width: 500px; padding: 0.75rem; font-size: 0.95rem; 
+                                border: 2px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.05); 
+                                color: var(--text-light); border-radius: 8px; font-family: 'DM Sans', sans-serif;"
+                                oninput="test.filterSessions(this.value)">
+                        </div>
+                    ` : ''}
+
+                    <div id="sessions-list" style="max-height: 450px; overflow-y: auto; margin: 1rem 0;">
+                        ${this.renderSessionsList(sessionsList)}
+                    </div>
+
+                    <div class="button-group">
+                        <button class="primary" onclick="test.createNewSession()">New Session</button>
+                        <button class="secondary" onclick="test.backToMain()">Back</button>
+                    </div>
+                `;
+            }
+
+            createNewSession() {
+                this.state = 'session-create';
+                this.container.className = '';
+                
+                this.content.innerHTML = `
+                    <h1>New Session</h1>
+                    <p class="subtitle">Create a named session for your tests</p>
+                    <div style="margin-top: 2rem;">
+                        <input type="text" id="session-name-input" placeholder="Enter session name..." 
+                            style="width: 100%; max-width: 400px; padding: 1rem; font-size: 1.1rem; 
+                            border: 2px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.05); 
+                            color: var(--text-light); border-radius: 8px; margin-bottom: 1rem; font-family: 'DM Sans', sans-serif;">
+                        <div class="button-group">
+                            <button class="primary" onclick="test.createSession()">Start Session</button>
+                            <button class="secondary" onclick="test.showAllSessions()">Cancel</button>
+                        </div>
+                    </div>
+                `;
+                
+                setTimeout(() => {
+                    const input = document.getElementById('session-name-input');
+                    input.focus();
+                    input.addEventListener('keypress', (e) => {
+                        if (e.key === 'Enter') {
+                            this.createSession();
+                        }
+                    });
+                }, 100);
+            }
+
+            backToMain() {
+                // Go back to current session or temp session
+                this.showInstructions();
+            }
+
+            renderSessionsList(sessionsList) {
+                if (sessionsList.length === 0) {
+                    return '<p class="instruction">No sessions found</p>';
+                }
+
+                return sessionsList.map(session => {
+                    const times = session.reactionTimes;
+                    const avg = times.length > 0 ? Math.round(times.reduce((a, b) => a + b, 0) / times.length) : 0;
+                    const best = times.length > 0 ? Math.min(...times) : 0;
+                    const date = new Date(session.created).toLocaleDateString();
+                    const time = new Date(session.created).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    const isCurrent = session.id === this.currentSessionId;
+
+                    return `
+                        <div class="session-card-compact ${isCurrent ? 'current' : ''}" data-session-id="${session.id}">
+                            <div class="session-header-compact">
+                                <div class="session-name-compact">${session.name} ${isCurrent ? '<span class="current-badge-compact">CURRENT</span>' : ''}</div>
+                                <div class="session-date-compact">${date} ${time}</div>
+                            </div>
+                            <div class="session-stats-compact">
+                                <span class="stat-compact">${times.length} attempts</span>
+                                <span class="stat-compact">Avg: <strong>${avg}ms</strong></span>
+                                <span class="stat-compact">Best: <strong>${best}ms</strong></span>
+                            </div>
+                            <div class="session-actions-compact">
+                                <button class="action-btn" onclick="test.loadSession('${session.id}')">View</button>
+                                <button class="action-btn" onclick="test.exportSessionCSVById('${session.id}')">Export</button>
+                                <button class="action-btn" onclick="test.clearSessionData('${session.id}')">Clear</button>
+                                <button class="action-btn delete" onclick="test.deleteSession('${session.id}')">Delete</button>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            }
+
+            filterSessions(searchTerm) {
+                const sessionsList = Object.values(this.sessions)
+                    .filter(session => !session.isTemp && session.name.toLowerCase().includes(searchTerm.toLowerCase()))
+                    .sort((a, b) => new Date(b.created) - new Date(a.created));
+
+                document.getElementById('sessions-list').innerHTML = this.renderSessionsList(sessionsList);
+            }
+
+            loadSession(sessionId) {
+                this.currentSessionId = sessionId;
+                localStorage.setItem('currentSessionId', sessionId);
+                this.showInstructions();
+            }
+
+            clearSessionData(sessionId) {
+                if (confirm('Clear all results from this session? This cannot be undone.')) {
+                    const session = this.sessions[sessionId];
+                    if (session) {
+                        session.reactionTimes = [];
+                        this.saveSessions();
+                        this.showAllSessions();
+                    }
+                }
+            }
+
+            deleteSession(sessionId) {
+                if (confirm('Are you sure you want to delete this session?')) {
+                    delete this.sessions[sessionId];
+                    if (this.currentSessionId === sessionId) {
+                        this.currentSessionId = null;
+                        localStorage.removeItem('currentSessionId');
+                    }
+                    this.saveSessions();
+                    this.showAllSessions();
+                }
+            }
+
+            endSession() {
+                this.currentSessionId = 'temp';
+                if (!this.sessions['temp']) {
+                    this.sessions['temp'] = {
+                        id: 'temp',
+                        name: 'Unsaved Session',
+                        created: new Date().toISOString(),
+                        reactionTimes: [],
+                        isTemp: true
+                    };
+                }
+                localStorage.removeItem('currentSessionId');
+                this.showInstructions();
+            }
+
+            exportSessionCSV() {
+                const session = this.getCurrentSession();
+                if (!session) return;
+                this.exportSessionCSVById(session.id);
+            }
+
+            exportSessionCSVById(sessionId) {
+                const session = this.sessions[sessionId];
+                if (!session || session.reactionTimes.length === 0) return;
+                
+                const csv = session.reactionTimes.join(',');
+                const blob = new Blob([csv], { type: 'text/csv' });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                const safeName = session.name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+                a.download = `${safeName}-${session.id}.csv`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+            }
+
+            startNewSession() {
+                const tempSession = this.sessions['temp'];
+                
+                // Auto-save the current temp session if it has data
+                if (tempSession && tempSession.reactionTimes.length > 0) {
+                    const sessionId = Date.now().toString();
+                    const sessionName = `Session ${new Date().toLocaleString()}`;
+                    
+                    this.sessions[sessionId] = {
+                        id: sessionId,
+                        name: sessionName,
+                        created: new Date().toISOString(),
+                        reactionTimes: [...tempSession.reactionTimes]
+                    };
+                    
+                    // Show brief confirmation
+                    this.showSaveNotification(sessionName);
+                }
+                
+                // Create fresh temp session
+                this.sessions['temp'] = {
+                    id: 'temp',
+                    name: 'Unsaved Session',
+                    created: new Date().toISOString(),
+                    reactionTimes: [],
+                    isTemp: true
+                };
+                
+                this.currentSessionId = 'temp';
+                localStorage.removeItem('currentSessionId');
+                this.saveSessions();
+                this.showInstructions();
+            }
+
+            showSaveNotification(sessionName) {
+                const notification = document.createElement('div');
+                notification.textContent = `✓ Session saved: ${sessionName}`;
+                notification.style.cssText = `
+                    position: fixed;
+                    top: 2rem;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    background: var(--accent);
+                    color: var(--bg-dark);
+                    padding: 1rem 2rem;
+                    border-radius: 8px;
+                    font-weight: 500;
+                    z-index: 10000;
+                    animation: slideDown 0.3s ease;
+                `;
+                document.body.appendChild(notification);
+                setTimeout(() => {
+                    notification.style.animation = 'slideUp 0.3s ease';
+                    setTimeout(() => {
+                        if (notification.parentNode) {
+                            document.body.removeChild(notification);
+                        }
+                    }, 300);
+                }, 2000);
+            }
+
+            clearCurrentSession() {
+                if (confirm('Clear all results from the current session? This cannot be undone.')) {
+                    const session = this.getCurrentSession();
+                    if (session) {
+                        session.reactionTimes = [];
+                        this.saveSessions();
+                        this.showInstructions();
+                    }
+                }
+            }
+
+            shareResults() {
+                const session = this.getCurrentSession();
+                if (!session || session.reactionTimes.length === 0) return;
+
+                const times = session.reactionTimes;
+                const avg = Math.round(times.reduce((a, b) => a + b, 0) / times.length);
+                const best = Math.min(...times);
+                const worst = Math.max(...times);
+
+                const shareText = `🎯 Reaction Time Test Results
+
+⚡ Best: ${best}ms
+📊 Average: ${avg}ms (${times.length} attempts)
+📉 Worst: ${worst}ms
+
+Test your reflexes: ${window.location.href}`;
+
+                // Try to use native share if available
+                if (navigator.share) {
+                    navigator.share({
+                        title: 'My Reaction Time Results',
+                        text: shareText
+                    }).catch(() => {
+                        // If share fails, fall back to clipboard
+                        this.copyToClipboard(shareText);
+                    });
+                } else {
+                    // Fall back to clipboard
+                    this.copyToClipboard(shareText);
+                }
+            }
+
+            copyToClipboard(text) {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(() => {
+                        this.showCopyNotification();
+                    }).catch(() => {
+                        // Fallback for older browsers
+                        this.fallbackCopy(text);
+                    });
+                } else {
+                    this.fallbackCopy(text);
+                }
+            }
+
+            fallbackCopy(text) {
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                textarea.style.position = 'fixed';
+                textarea.style.opacity = '0';
+                document.body.appendChild(textarea);
+                textarea.select();
+                try {
+                    document.execCommand('copy');
+                    this.showCopyNotification();
+                } catch (err) {
+                    alert('Failed to copy. Please copy manually:\n\n' + text);
+                }
+                document.body.removeChild(textarea);
+            }
+
+            showCopyNotification() {
+                const notification = document.createElement('div');
+                notification.textContent = '✓ Results copied to clipboard!';
+                notification.style.cssText = `
+                    position: fixed;
+                    top: 2rem;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    background: var(--accent);
+                    color: var(--bg-dark);
+                    padding: 1rem 2rem;
+                    border-radius: 8px;
+                    font-weight: 500;
+                    z-index: 10000;
+                    animation: slideDown 0.3s ease;
+                `;
+                document.body.appendChild(notification);
+                setTimeout(() => {
+                    notification.style.animation = 'slideUp 0.3s ease';
+                    setTimeout(() => document.body.removeChild(notification), 300);
+                }, 2000);
+            }
+        }
+
+        // Initialize the test
+        const test = new ReactionTimeTest();
+    </script>
+</body>
+</html>
