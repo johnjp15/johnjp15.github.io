@@ -74,7 +74,7 @@
 
         #content {
             text-align: center;
-            max-width: 600px;
+            width: 100%;
             padding: 2rem;
             max-height: 100vh;
             overflow-y: auto;
@@ -84,12 +84,11 @@
 
         h1 {
             font-family: 'JetBrains Mono', monospace;
-            font-size: 3.5rem;
+            font-size: clamp(1.6rem, 6vw, 4rem);
             font-weight: 700;
             margin-bottom: 1rem;
             letter-spacing: -0.02em;
             animation: fadeIn 0.6s ease;
-            white-space: nowrap;
         }
 
         .subtitle {
@@ -105,6 +104,9 @@
             color: var(--text-muted);
             margin-bottom: 1.5rem;
             animation: fadeIn 0.6s ease 0.2s backwards;
+            max-width: 560px;
+            margin-left: auto;
+            margin-right: auto;
         }
 
         .result-display {
@@ -127,6 +129,9 @@
             margin-top: 2rem;
             animation: fadeIn 0.6s ease 0.3s backwards;
             pointer-events: all;
+            max-width: 560px;
+            margin-left: auto;
+            margin-right: auto;
         }
 
         .stat-row {
@@ -154,6 +159,9 @@
             overflow-y: auto;
             animation: fadeIn 0.6s ease 0.4s backwards;
             pointer-events: all;
+            max-width: 560px;
+            margin-left: auto;
+            margin-right: auto;
         }
 
         .attempt-item {
@@ -175,6 +183,9 @@
             margin-top: 2rem;
             pointer-events: all;
             animation: fadeIn 0.6s ease 0.5s backwards;
+            max-width: 400px;
+            margin-left: auto;
+            margin-right: auto;
         }
 
         button {
@@ -427,6 +438,62 @@
             background: rgba(251, 191, 36, 0.05);
         }
 
+        /* Ultra-compact single-line session rows */
+        .session-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            padding: 0.5rem 0.75rem;
+            border-radius: 6px;
+            border: 1px solid rgba(255,255,255,0.08);
+            background: rgba(255,255,255,0.04);
+            margin-bottom: 0.35rem;
+            pointer-events: all;
+            max-width: 560px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .session-row.current {
+            border-color: rgba(251, 191, 36, 0.4);
+            background: rgba(251, 191, 36, 0.05);
+        }
+
+        .session-row-left {
+            display: flex;
+            flex-direction: column;
+            gap: 0.15rem;
+            min-width: 0;
+            flex: 1;
+        }
+
+        .session-row-name {
+            font-size: 0.85rem;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--text-light);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .session-row-meta {
+            font-size: 0.72rem;
+            color: var(--text-muted);
+        }
+
+        .session-row-meta strong {
+            color: var(--accent);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .session-row-actions {
+            display: flex;
+            gap: 0.3rem;
+            flex-shrink: 0;
+        }
+
         .session-header-compact {
             display: flex;
             justify-content: space-between;
@@ -609,68 +676,129 @@
                 if (savedSessionId && this.sessions[savedSessionId]) {
                     this.currentSessionId = savedSessionId;
                 } else if (!this.currentSessionId) {
-                    // Start with a temporary session for immediate testing
                     this.currentSessionId = 'temp';
                     if (!this.sessions['temp']) {
                         this.sessions['temp'] = {
-                            id: 'temp',
-                            name: 'Unsaved Session',
-                            created: new Date().toISOString(),
-                            reactionTimes: [],
-                            isTemp: true
+                            id: 'temp', name: 'Unsaved Session',
+                            created: new Date().toISOString(), reactionTimes: [], isTemp: true
                         };
                     }
                 }
-                
+
                 this.showInstructions();
-                
-                // Use mousedown for lowest possible latency
-                this.container.addEventListener('mousedown', (e) => {
-                    this.handleClick(e);
-                });
-                
-                // Touch events for mobile (even lower latency)
-                this.container.addEventListener('touchstart', (e) => {
-                    e.preventDefault(); // Prevent mouse events from firing
-                    this.handleClick(e);
-                }, { passive: false });
+                this._setupInputs();
             }
 
-            handleClick(e) {
-                // CRITICAL: Capture timestamp IMMEDIATELY before any checks
-                const clickTime = performance.now();
-                
-                // Prevent clicks on buttons, inputs, and interactive elements
-                if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') {
-                    return;
-                }
+            _setupInputs() {
+                // How long (ms) a press must be held before release-to-fire kicks in
+                const HOLD_THRESHOLD = 250;
 
-                // Prevent clicks on stats/attempts area from triggering test
-                if (e.target.closest('#stats-container') || 
-                    e.target.closest('#attempts-list') || 
-                    e.target.closest('.stat-row') || 
-                    e.target.closest('.attempt-item') ||
-                    e.target.closest('#sessions-list') ||
-                    e.target.closest('.session-card') ||
-                    e.target.closest('.session-card-compact')) {
-                    return;
-                }
+                this.container.addEventListener('mousedown', (e) => {
+                    if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') return;
+                    if (this._isUIElement(e.target)) return;
+                    this._onPressStart(performance.now());
+                });
+                this.container.addEventListener('mouseup', (e) => {
+                    if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') return;
+                    if (this._isUIElement(e.target)) return;
+                    this._onPressEnd(performance.now());
+                });
 
-                switch(this.state) {
+                this.container.addEventListener('touchstart', (e) => {
+                    if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') return;
+                    if (this._isUIElement(e.target)) return;
+                    e.preventDefault();
+                    this._onPressStart(performance.now());
+                }, { passive: false });
+                this.container.addEventListener('touchend', (e) => {
+                    if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') return;
+                    if (this._isUIElement(e.target)) return;
+                    e.preventDefault();
+                    this._onPressEnd(performance.now());
+                }, { passive: false });
+
+                document.addEventListener('keydown', (e) => {
+                    if (e.code === 'Space' && !e.repeat) {
+                        e.preventDefault();
+                        this._onPressStart(performance.now());
+                    }
+                });
+                document.addEventListener('keyup', (e) => {
+                    if (e.code === 'Space') {
+                        e.preventDefault();
+                        this._onPressEnd(performance.now());
+                    }
+                });
+
+                this._HOLD_THRESHOLD = HOLD_THRESHOLD;
+            }
+
+            _onPressStart(t) {
+                this._pressStartTime = t;
+                this._pressStartState = this.state;
+                this._tentativeReactionTime = null;
+                // Clear any previous hold timer
+                clearTimeout(this._holdTimer);
+                this._isHeld = false;
+                this._holdTimer = setTimeout(() => {
+                    this._isHeld = true;
+                    // Update the green screen text if we're already showing it
+                    if (this.state === 'ready') {
+                        const el = document.querySelector('.warning-text');
+                        if (el) el.textContent = 'Release!';
+                    }
+                }, this._HOLD_THRESHOLD);
+
+                switch (this.state) {
                     case 'idle':
-                        this.startTest();
-                        break;
-                    case 'waiting':
-                        this.tooSoon();
-                        break;
-                    case 'ready':
-                        this.recordReaction(clickTime);
-                        break;
                     case 'result':
                         this.startTest();
                         break;
+                    case 'waiting':
+                        // Fresh press during waiting = too soon.
+                        // BUT if this is a continuation of a hold that started at idle,
+                        // _pressStartState won't be waiting — so we only fire tooSoon
+                        // if this is genuinely a new press (not a held one from before).
+                        // Since a new mousedown always calls _onPressStart, we fire tooSoon.
+                        // The "hold from idle" case never re-fires mousedown during waiting.
+                        this.tooSoon();
+                        break;
+                    case 'ready':
+                        // Record tentative mousedown reaction time for quick-click mode
+                        this._tentativeReactionTime = t - this.startTime;
+                        break;
                 }
             }
+
+            _onPressEnd(t) {
+                clearTimeout(this._holdTimer);
+                const wasHeld = this._isHeld;
+                this._isHeld = false;
+
+                switch (this.state) {
+                    case 'waiting':
+                        // Short tap that started the test: fine, still waiting for green.
+                        // But if they held past the threshold and release early: Too Soon.
+                        if (wasHeld) this.tooSoon();
+                        break;
+                    case 'ready':
+                        if (wasHeld) {
+                            this.recordReaction(t);
+                        } else {
+                            this.recordReaction(this._pressStartTime);
+                        }
+                        break;
+                }
+            }
+
+            _isUIElement(el) {
+                return !!(el.closest('#stats-container') || el.closest('#attempts-list') ||
+                    el.closest('.stat-row') || el.closest('.attempt-item') ||
+                    el.closest('#sessions-list') || el.closest('.session-row') ||
+                    el.closest('.session-card') || el.closest('.session-card-compact'));
+            }
+
+            handleClick(e) {}
 
             createSession() {
                 const input = document.getElementById('session-name-input');
@@ -695,39 +823,20 @@
                 if (!session) {
                     this.currentSessionId = 'temp';
                     this.sessions['temp'] = {
-                        id: 'temp',
-                        name: 'Unsaved Session',
-                        created: new Date().toISOString(),
-                        reactionTimes: [],
-                        isTemp: true
+                        id: 'temp', name: 'Unsaved Session',
+                        created: new Date().toISOString(), reactionTimes: [], isTemp: true
                     };
                     return this.showInstructions();
                 }
 
                 this.state = 'idle';
                 this.container.className = '';
-                
-                const hasOtherSessions = Object.keys(this.sessions).filter(id => id !== 'temp').length > 0;
-                
+
                 this.content.innerHTML = `
                     <h1>Reaction Time Test</h1>
                     <p class="subtitle">${session.isTemp ? 'Test your visual reflexes' : `Session: ${session.name}`}</p>
-                    <p class="instruction">
-                        Click anywhere to start. When the screen turns <span style="color: var(--bg-red)">red</span>, 
-                        wait. When it turns <span style="color: var(--bg-green)">green</span>, click as quickly as you can!
-                    </p>
+                    <p class="instruction">Click anywhere to start. When the screen turns <span style="color:var(--bg-red)">red</span>, wait. When it turns <span style="color:var(--bg-green)">green</span>, react!</p>
                     ${session.reactionTimes.length > 0 ? this.renderStats() : ''}
-                    ${session.isTemp && session.reactionTimes.length === 0 ? `
-                        <div class="button-group" style="margin-top: 3rem; justify-content: center;">
-                            ${hasOtherSessions ? '<button class="secondary" onclick="test.showAllSessions()">View Sessions</button>' : ''}
-                        </div>
-                    ` : ''}
-                    ${!session.isTemp ? `
-                        <div class="button-group" style="margin-top: 2rem;">
-                            <button class="secondary" onclick="test.showAllSessions()">All Sessions</button>
-                            <button class="secondary" onclick="test.endSession()">End Session</button>
-                        </div>
-                    ` : ''}
                 `;
             }
 
@@ -745,11 +854,12 @@
 
             showReady() {
                 this.state = 'ready';
-                // CRITICAL: Set startTime right before visual change for minimal latency
                 this.startTime = performance.now();
                 this.container.className = 'ready';
+                // If already holding down, show "Release!" immediately; otherwise "Click!"
+                const text = this._isHeld ? 'Release!' : 'Click!';
                 this.content.innerHTML = `
-                    <p class="warning-text">Click now!</p>
+                    <p class="warning-text">${text}</p>
                 `;
             }
 
@@ -833,6 +943,7 @@
                             <button class="secondary" onclick="test.exportSessionCSV()">Export CSV</button>
                         `}
                         <button class="secondary" onclick="test.showAllSessions()">Manage Sessions</button>
+                        <button class="secondary" onclick="test.resetCurrentSession()" style="color: #ef4444; border-color: rgba(239,68,68,0.35);">Reset</button>
                     </div>
                 `;
             }
@@ -841,32 +952,43 @@
                 this.state = 'sessions';
                 this.container.className = '';
                 
-                // Filter out temp session from the list
-                const sessionsList = Object.values(this.sessions)
+                // Include ALL sessions - current (temp or named) + saved ones
+                const currentSession = this.getCurrentSession();
+                const savedSessions = Object.values(this.sessions)
                     .filter(s => !s.isTemp)
                     .sort((a, b) => new Date(b.created) - new Date(a.created));
 
+                // Build unified list: current session on top if it has data, then saved
+                const allSessions = [];
+                if (currentSession && currentSession.isTemp && currentSession.reactionTimes.length > 0) {
+                    allSessions.push(currentSession);
+                }
+                allSessions.push(...savedSessions);
+
+                const totalCount = allSessions.length;
+
                 this.content.innerHTML = `
-                    <h1 style="font-size: 2rem; margin-bottom: 0.5rem;">Session Manager</h1>
-                    <p class="subtitle" style="font-size: 0.95rem; margin-bottom: 1rem;">${sessionsList.length} session${sessionsList.length !== 1 ? 's' : ''} saved</p>
+                    <h1 style="font-size: 2rem; margin-bottom: 0.5rem;">Sessions</h1>
+                    <p class="subtitle" style="font-size: 0.9rem; margin-bottom: 0.75rem;">${totalCount} session${totalCount !== 1 ? 's' : ''}</p>
                     
-                    ${sessionsList.length > 0 ? `
-                        <div style="margin: 1rem 0;">
-                            <input type="text" id="session-search" placeholder="Search sessions..." 
-                                style="width: 100%; max-width: 500px; padding: 0.75rem; font-size: 0.95rem; 
-                                border: 2px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.05); 
-                                color: var(--text-light); border-radius: 8px; font-family: 'DM Sans', sans-serif;"
+                    ${allSessions.length > 2 ? `
+                        <div style="margin: 0.75rem 0;">
+                            <input type="text" id="session-search" placeholder="Search..." 
+                                style="width: 100%; padding: 0.6rem 0.75rem; font-size: 0.9rem; 
+                                border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.05); 
+                                color: var(--text-light); border-radius: 6px; font-family: 'DM Sans', sans-serif;"
                                 oninput="test.filterSessions(this.value)">
                         </div>
                     ` : ''}
 
-                    <div id="sessions-list" style="max-height: 450px; overflow-y: auto; margin: 1rem 0;">
-                        ${this.renderSessionsList(sessionsList)}
+                    <div id="sessions-list" style="max-height: 480px; overflow-y: auto; margin: 0.75rem 0;">
+                        ${this.renderSessionsList(allSessions)}
                     </div>
 
                     <div class="button-group">
                         <button class="primary" onclick="test.createNewSession()">New Session</button>
                         <button class="secondary" onclick="test.backToMain()">Back</button>
+                        <button class="secondary" onclick="test.confirmClearAll()" style="color:#ef4444;border-color:rgba(239,68,68,0.35);">Clear All Sessions</button>
                     </div>
                 `;
             }
@@ -906,35 +1028,57 @@
                 this.showInstructions();
             }
 
+            confirmClearAll() {
+                this.container.className = '';
+                this.content.innerHTML = `
+                    <h1>Clear all sessions?</h1>
+                    <p class="instruction" style="max-width:400px;">Every saved session will be permanently deleted. Your current unsaved results will also be cleared.</p>
+                    <div class="button-group">
+                        <button class="secondary" onclick="test.showAllSessions()">No, keep everything</button>
+                        <button class="secondary" onclick="test.executeClearAll()" style="color:#ef4444;border-color:rgba(239,68,68,0.35);">Yes, delete all</button>
+                    </div>
+                `;
+            }
+
+            executeClearAll() {
+                this.sessions = {
+                    temp: {
+                        id: 'temp', name: 'Unsaved Session',
+                        created: new Date().toISOString(), reactionTimes: [], isTemp: true
+                    }
+                };
+                this.currentSessionId = 'temp';
+                localStorage.removeItem('currentSessionId');
+                this.saveSessions();
+                this.showAllSessions();
+            }
+
             renderSessionsList(sessionsList) {
                 if (sessionsList.length === 0) {
-                    return '<p class="instruction">No sessions found</p>';
+                    return '<p class="instruction" style="font-size:0.9rem; margin: 1rem 0;">No sessions yet — complete some tests to see them here.</p>';
                 }
 
                 return sessionsList.map(session => {
                     const times = session.reactionTimes;
-                    const avg = times.length > 0 ? Math.round(times.reduce((a, b) => a + b, 0) / times.length) : 0;
-                    const best = times.length > 0 ? Math.min(...times) : 0;
-                    const date = new Date(session.created).toLocaleDateString();
-                    const time = new Date(session.created).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                    const isCurrent = session.id === this.currentSessionId;
+                    const avg = times.length > 0 ? Math.round(times.reduce((a, b) => a + b, 0) / times.length) : '—';
+                    const best = times.length > 0 ? Math.min(...times) : '—';
+                    const date = new Date(session.created).toLocaleDateString([], { month: 'short', day: 'numeric' });
+                    const time = new Date(session.created).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
+                    const isCurrent = session.id === this.currentSessionId || (session.isTemp && this.currentSessionId === 'temp');
+                    const displayName = session.isTemp ? 'Current (unsaved)' : session.name;
 
                     return `
-                        <div class="session-card-compact ${isCurrent ? 'current' : ''}" data-session-id="${session.id}">
-                            <div class="session-header-compact">
-                                <div class="session-name-compact">${session.name} ${isCurrent ? '<span class="current-badge-compact">CURRENT</span>' : ''}</div>
-                                <div class="session-date-compact">${date} ${time}</div>
+                        <div class="session-row ${isCurrent ? 'current' : ''}">
+                            <div class="session-row-left">
+                                <span class="session-row-name">${displayName}</span>
+                                ${isCurrent ? '<span class="current-badge-compact">CURRENT</span>' : ''}
+                                <span class="session-row-meta">${date} ${time} &middot; ${times.length} runs &middot; avg <strong>${avg}ms</strong> &middot; best <strong>${best}ms</strong></span>
                             </div>
-                            <div class="session-stats-compact">
-                                <span class="stat-compact">${times.length} attempts</span>
-                                <span class="stat-compact">Avg: <strong>${avg}ms</strong></span>
-                                <span class="stat-compact">Best: <strong>${best}ms</strong></span>
-                            </div>
-                            <div class="session-actions-compact">
-                                <button class="action-btn" onclick="test.loadSession('${session.id}')">View</button>
-                                <button class="action-btn" onclick="test.exportSessionCSVById('${session.id}')">Export</button>
+                            <div class="session-row-actions">
+                                <button class="action-btn" onclick="test.exportSessionCSVById('${session.id}')">CSV</button>
+                                ${!session.isTemp ? `<button class="action-btn" onclick="test.loadSession('${session.id}')">Load</button>` : ''}
                                 <button class="action-btn" onclick="test.clearSessionData('${session.id}')">Clear</button>
-                                <button class="action-btn delete" onclick="test.deleteSession('${session.id}')">Delete</button>
+                                ${!session.isTemp ? `<button class="action-btn delete" onclick="test.deleteSession('${session.id}')">Del</button>` : ''}
                             </div>
                         </div>
                     `;
@@ -942,11 +1086,39 @@
             }
 
             filterSessions(searchTerm) {
-                const sessionsList = Object.values(this.sessions)
-                    .filter(session => !session.isTemp && session.name.toLowerCase().includes(searchTerm.toLowerCase()))
+                const currentSession = this.getCurrentSession();
+                const allSessions = [];
+                if (currentSession && currentSession.isTemp && currentSession.reactionTimes.length > 0 &&
+                    'current (unsaved)'.includes(searchTerm.toLowerCase())) {
+                    allSessions.push(currentSession);
+                }
+                const saved = Object.values(this.sessions)
+                    .filter(s => !s.isTemp && s.name.toLowerCase().includes(searchTerm.toLowerCase()))
                     .sort((a, b) => new Date(b.created) - new Date(a.created));
+                allSessions.push(...saved);
+                document.getElementById('sessions-list').innerHTML = this.renderSessionsList(allSessions);
+            }
 
-                document.getElementById('sessions-list').innerHTML = this.renderSessionsList(sessionsList);
+            resetCurrentSession() {
+                this.state = 'confirm-reset';
+                this.container.className = '';
+                this.content.innerHTML = `
+                    <h1>Clear session?</h1>
+                    <p class="instruction" style="max-width:400px;">All results in the current session will be permanently deleted.</p>
+                    <div class="button-group">
+                        <button class="secondary" onclick="test.showInstructions()">No, keep results</button>
+                        <button class="secondary" onclick="test.confirmReset()" style="color:#ef4444;border-color:rgba(239,68,68,0.35);">Yes, clear</button>
+                    </div>
+                `;
+            }
+
+            confirmReset() {
+                const session = this.getCurrentSession();
+                if (session) {
+                    session.reactionTimes = [];
+                    this.saveSessions();
+                }
+                this.showInstructions();
             }
 
             loadSession(sessionId) {
@@ -1017,33 +1189,29 @@
             }
 
             startNewSession() {
-                const tempSession = this.sessions['temp'];
-                
-                // Auto-save the current temp session if it has data
-                if (tempSession && tempSession.reactionTimes.length > 0) {
-                    const sessionId = Date.now().toString();
-                    const sessionName = `Session ${new Date().toLocaleString()}`;
-                    
-                    this.sessions[sessionId] = {
-                        id: sessionId,
-                        name: sessionName,
-                        created: new Date().toISOString(),
-                        reactionTimes: [...tempSession.reactionTimes]
-                    };
-                    
-                    // Show brief confirmation
+                // Save current session if it has data (whether named or temp)
+                const current = this.getCurrentSession();
+                if (current && current.reactionTimes.length > 0) {
+                    const sessionId = current.isTemp ? Date.now().toString() : current.id;
+                    const sessionName = current.isTemp
+                        ? `Session ${new Date().toLocaleString()}`
+                        : current.name;
+
+                    if (current.isTemp) {
+                        this.sessions[sessionId] = {
+                            id: sessionId, name: sessionName,
+                            created: new Date().toISOString(),
+                            reactionTimes: [...current.reactionTimes]
+                        };
+                    }
                     this.showSaveNotification(sessionName);
                 }
-                
-                // Create fresh temp session
+
+                // Fresh temp session
                 this.sessions['temp'] = {
-                    id: 'temp',
-                    name: 'Unsaved Session',
-                    created: new Date().toISOString(),
-                    reactionTimes: [],
-                    isTemp: true
+                    id: 'temp', name: 'Unsaved Session',
+                    created: new Date().toISOString(), reactionTimes: [], isTemp: true
                 };
-                
                 this.currentSessionId = 'temp';
                 localStorage.removeItem('currentSessionId');
                 this.saveSessions();
