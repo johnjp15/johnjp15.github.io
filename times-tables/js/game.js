@@ -241,10 +241,11 @@ class Round {
     this.card.classList.remove('good', 'slow', 'bad');
     this.card.classList.add('fixing');
     this.msg.textContent = '';
-    this.fixEl.replaceChildren(
+    this.fixEl.replaceChildren(...[
       h('div', { class: 'fix-eq' }, `${q.a} × ${q.b} = ${q.answer}`),
       trick && h('div', { class: 'fix-trick' }, `💡 ${trick}`),
-      h('div', { class: 'fix-ask' }, `Type ${q.answer} to lock it in 🔒`));
+      h('div', { class: 'fix-ask' }, `Type ${q.answer} to lock it in 🔒`),
+    ].filter(Boolean));
     this.renderAns();
   }
 

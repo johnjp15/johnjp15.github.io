@@ -1,4 +1,4 @@
-// Compact binary format for benchmark results, so a whole test (every question,
+// Compact binary format for Mastery Check results, so a whole test (every question,
 // answer and response time) fits in a link that opens on any device.
 
 import { hexToBytes, bytesToHex } from './util.js';
@@ -52,7 +52,7 @@ export class Reader {
 }
 
 /**
- * The signed core of one benchmark test.
+ * The signed core of one Mastery Check (the benchmark test).
  * t: { pid, avatar, name, created, seq, before24, restores, start, dur, leaves, device,
  *      standalone, tz, limit, reason, total, items: [{ a, b, given, ms, timeout, left }] }
  */

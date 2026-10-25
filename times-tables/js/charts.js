@@ -20,7 +20,7 @@ function ensureTip() {
 
 export function showTip(x, y, ...content) {
   const t = ensureTip();
-  t.replaceChildren(...content);
+  t.replaceChildren(...content.filter(Boolean));
   t.hidden = false;
   const r = t.getBoundingClientRect();
   const left = Math.max(8, Math.min(innerWidth - r.width - 8, x - r.width / 2));

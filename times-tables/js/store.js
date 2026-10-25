@@ -68,6 +68,7 @@ function defaults(id) {
     tests: [],
     testSeq: 0,
     restores: 0,
+    cards: {}, // flash-card decks studied: { [table|'tricky'|'custom']: { times, last } }
     badges: {},
     stats: { answers: 0, correct: 0, fast: 0, bestCombo: 0, rounds: 0 },
     settings: { sound: true },
@@ -144,6 +145,7 @@ export function mergeBackup(local, backup) {
     stats,
     blitzBest: Math.max(local.blitzBest || 0, base.blitzBest || 0),
     badges: { ...base.badges, ...local.badges },
+    cards: { ...base.cards, ...local.cards },
     streak: later(local.streak, base.streak),
     daily: later(local.daily, base.daily),
     tests,
@@ -241,7 +243,8 @@ export function addXp(p, n) {
 }
 
 export const BADGES = {
-  first_test: { icon: '📋', name: 'First Benchmark', desc: 'Took your first benchmark test' },
+  cards12: { icon: '🃏', name: 'Card Shark', desc: 'Studied the flash cards for all 12 tables' },
+  first_test: { icon: '🏅', name: 'First Mastery Check', desc: 'Finished your first Mastery Check' },
   combo10: { icon: '💥', name: 'Combo ×10', desc: '10 right answers in a row' },
   combo25: { icon: '🌟', name: 'Unstoppable', desc: '25 right answers in a row' },
   blitz30: { icon: '⚡', name: 'Blitz Master', desc: '30+ correct in a 60-second Blitz' },
@@ -251,7 +254,7 @@ export const BADGES = {
   boss12: { icon: '🐲', name: 'Dragon Slayer', desc: 'Defeated all 12 bosses' },
   half: { icon: '🧗', name: 'Halfway Hero', desc: 'Memorized 39 of 78 facts' },
   all: { icon: '🏆', name: 'Times Table Champion', desc: `Memorized all ${TOTAL} facts` },
-  perfect: { icon: '💯', name: 'Perfect Benchmark', desc: `${TOTAL} of ${TOTAL} instant answers on a benchmark` },
+  perfect: { icon: '💯', name: 'Perfect Mastery Check', desc: `${TOTAL} of ${TOTAL} instant answers on a Mastery Check` },
 };
 
 /** Award any newly earned badges; returns the list of new ones. */
@@ -265,6 +268,7 @@ export function checkBadges(p, extra = {}) {
   };
   const mem = memorizedCount(p);
   const bossWins = Object.values(p.bosses).filter(b => b.stars > 0).length;
+  give('cards12', Array.from({ length: 12 }, (_, i) => p.cards?.[i + 1]).every(Boolean));
   give('first_test', p.tests.some(t => !t.sum.reason));
   give('combo10', p.stats.bestCombo >= 10);
   give('combo25', p.stats.bestCombo >= 25);

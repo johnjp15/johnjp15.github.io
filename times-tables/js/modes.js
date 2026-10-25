@@ -242,7 +242,7 @@ export function bossMode(player, t) {
   };
 }
 
-// ---------- Benchmark test: all 78 facts, 6 seconds each, signed results ----------
+// ---------- Mastery Check (the benchmark test): all 78 facts, 6 seconds each, signed results ----------
 
 export const TEST_LIMIT_MS = 6000;
 export const MAX_LEAVES = 3;
@@ -273,12 +273,12 @@ export function testMode(player) {
     id: 'test',
     limit: TEST_LIMIT_MS,
     countdown: true,
-    introIcon: '📋',
-    introTitle: 'Benchmark test',
+    introIcon: '🏅',
+    introTitle: 'Mastery Check',
     introText: `${TOTAL} questions · 6 seconds each · stay in the app!`,
     init(r) {
       r.hud.append(
-        h('div', { class: 'hud-title' }, '📋 Benchmark'),
+        h('div', { class: 'hud-title' }, '🏅 Check'),
         h('div', { class: 'hud-progress' }, (fill = h('i'))),
         (counter = h('div', { class: 'hud-stat' })),
         (leavesEl = h('div', { class: 'hud-leaves', hidden: true })));

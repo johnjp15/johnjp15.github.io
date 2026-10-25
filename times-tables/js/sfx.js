@@ -60,6 +60,18 @@ export const sfx = {
   },
 };
 
+/** Read a fact out loud (only ever called from a tap, as iOS requires). */
+export function speak(text) {
+  try {
+    const synth = window.speechSynthesis;
+    if (!synth) return;
+    synth.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = 0.85;
+    synth.speak(u);
+  } catch { /* speech unavailable */ }
+}
+
 // iOS Safari has no vibrate(); toggling a hidden <input switch> gives a haptic tap on iOS 18+.
 let hapticLabel = null;
 export function haptic() {

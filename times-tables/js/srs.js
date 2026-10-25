@@ -20,7 +20,7 @@ export const factState = (player, f) => player.facts[f.key] || FRESH;
 /**
  * Apply one answer to a fact's state. Returns 'up' (climbed a box), 'early'
  * (fast, but reviewed before due), 'slow' or 'miss'.
- * placement: an instant answer on a benchmark marks a brand-new fact Memorized
+ * placement: an instant answer on a Mastery Check marks a brand-new fact Memorized
  * straight away (it gets re-checked in a week).
  */
 export function updateFact(st, { correct, ms }, now, placement = false) {

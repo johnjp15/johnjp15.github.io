@@ -1,11 +1,12 @@
 // Every screen of the app (except the game itself, see game.js).
 
-import { h, rand, clip, fmtAgo, fmtShortDate, fmtDate, isIOS, isStandalone, plural, shortId } from './util.js';
+import { h, rand, clip, shuffle, dayKey, fmtAgo, fmtShortDate, fmtDate, isIOS, isStandalone, plural, shortId } from './util.js';
 import { TOTAL, BOSSES, MAX, factOf, trickFor } from './facts.js';
 import { LEVELS, memorizedCount, tableMastery, weakestTable, factState } from './srs.js';
 import * as store from './store.js';
 import { play } from './game.js';
 import { trainMode, blitzMode, bossMode, testMode, finalizeAbandonedTest } from './modes.js';
+import { runFlashcards, tableCards, trickyCards, hasTrickyCards } from './flashcards.js';
 import { shareLink, readLink, backupLink, readBackup, deviceSeal, setDeviceSeal, deriveSeal, fpText, cryptoReady } from './certs.js';
 import { resultsView } from './results-view.js';
 import { factGrid, lineChart, ring, tipValue } from './charts.js';
@@ -59,7 +60,7 @@ export async function boot() {
   setSound(player.settings.sound);
   home();
   if (interrupted) {
-    dialog({ icon: '📋', title: 'Unfinished test', body: `Benchmark #${interrupted.seq} was interrupted (the app was closed or reloaded), so it was saved as incomplete.` });
+    dialog({ icon: '🏅', title: 'Unfinished Mastery Check', body: `Mastery Check #${interrupted.seq} was interrupted (the app was closed or reloaded), so it was saved as incomplete.` });
   }
 }
 
@@ -126,8 +127,8 @@ async function firstRun() {
   const go = await dialog({
     icon: AVATARS[player.avatar],
     title: `Welcome, ${player.name}!`,
-    body: 'First, let\'s find out which facts you already know with a Benchmark test. It takes about 5 minutes.',
-    buttons: [{ label: 'Take the test 📋', value: true, primary: true }, { label: 'Maybe later', value: false }],
+    body: 'First, let\'s find out which facts you already know with a Mastery Check. It takes about 5 minutes.',
+    buttons: [{ label: 'Take the Mastery Check 🏅', value: true, primary: true }, { label: 'Maybe later', value: false }],
   });
   if (go) testIntro();
 }
@@ -209,10 +210,14 @@ function home() {
       h('span', { class: 'bm-icon' }, '🧠'),
       h('span', { class: 'bm-text' }, h('b', null, 'Train'), h('small', null, 'Smart daily practice')),
       h('span', { class: 'bm-go' }, '›')),
+    h('button', { class: 'btn btn-learn', type: 'button', onclick: flashMenu },
+      h('span', { class: 'bm-icon' }, '🃏'),
+      h('span', { class: 'bm-text' }, h('b', null, 'Flash Cards'), h('small', null, 'Learn a table, one card at a time')),
+      h('span', { class: 'bm-go' }, '›')),
     h('div', { class: 'mode-grid' },
       modeTile('👾', 'Boss Battles', `${wins}/12 defeated`, bossMap, 't-pink'),
       modeTile('⚡', 'Blitz', p.blitzBest ? `Best: ${p.blitzBest}` : '60 seconds', startBlitz, 't-cyan'),
-      modeTile('📋', 'Benchmark', lastTest ? `Last: ${fmtAgo(lastTest.start)}` : 'Test yourself', testIntro, 't-gold'),
+      modeTile('🏅', 'Mastery Check', lastTest ? `Last: ${fmtAgo(lastTest.start)}` : 'Test yourself', testIntro, 't-gold'),
       modeTile('🗺️', 'My Map', `${mem}/${TOTAL} facts`, mapScreen, 't-violet')),
     h('button', { class: 'btn btn-ghost wide', type: 'button', onclick: historyScreen }, '📈 My results & sharing'),
     installTip()));
@@ -292,6 +297,10 @@ async function startTrain(table = null) {
       h('ul', { class: 'practice' }, missed.map(q => h('li', { class: 'p-miss' },
         h('span', { class: 'p-eq' }, `${q.a} × ${q.b} = ${q.a * q.b}`),
         h('span', { class: 'p-why' }, trickFor(q.a, q.b) || ''))))),
+    missed.length > 0 && h('button', {
+      class: 'btn btn-learn-small wide', type: 'button',
+      onclick: () => startFlash({ custom: missed.map(q => ({ a: q.a, b: q.b })), label: 'Missed' }),
+    }, '🃏 Study these as flash cards'),
     h('div', { class: 'btn-row' },
       h('button', { class: 'btn btn-primary', type: 'button', onclick: () => startTrain(res.table) }, 'Train again'),
       h('button', { class: 'btn btn-ghost', type: 'button', onclick: home }, 'Home')));
@@ -300,6 +309,77 @@ async function startTrain(table = null) {
 }
 
 const sumTile = (icon, n, label) => h('div', { class: 'tile' }, h('div', { class: 'tile-value' }, `${icon} ${n}`), h('div', { class: 'tile-label' }, label));
+
+// ---------- flash cards ----------
+
+function flashMenu() {
+  let mix = !!store.lsGet('fcShuffle');
+  const sw = h('input', {
+    type: 'checkbox', class: 'switch', checked: mix, 'aria-label': 'Shuffle the cards',
+    onchange: e => { mix = e.target.checked; store.lsSet('fcShuffle', mix); },
+  });
+  page('🃏 Flash Cards', home,
+    h('p', { class: 'muted center small' }, 'Pick a table. Look at each card, say the answer out loud, then flip it to check. Be honest — tap “Again” if you weren\'t sure!'),
+    h('div', { class: 'table-chips' },
+      Array.from({ length: MAX }, (_, i) => i + 1).map(t => {
+        const m = tableMastery(player, t);
+        const studied = player.cards?.[t];
+        return h('button', { class: `tchip ${studied ? 'studied' : ''}`, type: 'button', onclick: () => startFlash({ table: t, mix }), 'aria-label': `${t} times table flash cards${studied ? ', studied' : ''}` },
+          h('b', null, `${t}s`, studied ? h('span', { class: 'tchip-check' }, ' ✓') : null),
+          h('span', { class: 'tchip-bar' }, h('i', { style: { width: `${Math.round(m * 100)}%` } })));
+      })),
+    card(h('label', { class: 'setting' }, h('span', null, '🔀 Shuffle the cards'), sw)),
+    hasTrickyCards(player) && h('button', { class: 'btn btn-learn-small wide', type: 'button', onclick: () => startFlash({ tricky: true }) }, '🧩 My tricky facts'),
+    card(
+      h('h3', null, 'The learning path'),
+      h('ol', { class: 'steps' },
+        h('li', null, '🃏 Learn a table here with flash cards.'),
+        h('li', null, '🧠 Train it until the answers pop out in under 3 seconds.'),
+        h('li', null, '👾 Beat that table\'s boss.'),
+        h('li', null, '🏅 Prove it in a Mastery Check!'))));
+}
+
+/** deck: { table, mix } | { tricky } | { custom: [{ a, b }], label } */
+async function startFlash(deck) {
+  const { table = null, tricky = false, custom = null, label = '', mix = false } = deck;
+  const cards = custom || (tricky ? trickyCards(player) : tableCards(table));
+  const title = custom ? `🃏 ${label}` : tricky ? '🧩 Tricky' : `🃏 ${table}s`;
+  const res = await runFlashcards({ title, cards: mix || tricky || custom ? shuffle(cards) : cards, player });
+  if (res.quit && res.known === 0) return table ? flashMenu() : home();
+
+  let xp = 0;
+  if (!res.quit) {
+    const key = custom ? 'custom' : tricky ? 'tricky' : String(table);
+    const rec = (player.cards[key] ||= { times: 0, last: null });
+    rec.times++;
+    if (rec.last !== dayKey()) xp = 15; // once per deck per day
+    rec.last = dayKey();
+  }
+  const leveled = store.addXp(player, xp);
+  const badges = store.checkBadges(player);
+  store.savePlayer(player);
+
+  const t = table;
+  page(res.quit ? 'Cards put away' : 'Deck done!', null,
+    h('div', { class: 'sum-hero' },
+      h('div', { class: 'sum-emoji' }, res.quit ? '🃏' : res.again ? '🧠' : '🌟'),
+      h('h2', null, t ? `You studied the ${t}s!` : 'Cards studied!'),
+      h('p', { class: 'muted' }, res.quit
+        ? `${res.known} of ${res.total} cards done.`
+        : res.again ? `${plural(res.again, 'card')} needed another look — that's how learning works!` : 'Every card right on the first try!'),
+      xp > 0 && h('div', { class: 'xp-gain' }, `+${xp} XP`)),
+    card(
+      h('h3', null, '🔒 Now lock it in'),
+      h('p', { class: 'small' }, 'Flash cards help you learn. Speed makes it stick — now try answering without the cards.')),
+    h('div', { class: 'btn-row' },
+      h('button', { class: 'btn btn-primary', type: 'button', onclick: () => startTrain(t) }, t ? `⚡ Quiz me on ${t}s` : '🧠 Train'),
+      t && h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => startBoss(t) }, `${BOSSES[t].emoji} Fight the ${t}s boss`)),
+    h('div', { class: 'btn-row' },
+      h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => startFlash(deck) }, '🃏 Go again'),
+      h('button', { class: 'btn btn-ghost', type: 'button', onclick: home }, 'Home')));
+  if (!res.quit && !res.again) confetti(90);
+  celebrate({ leveled, badges });
+}
 
 // ---------- blitz ----------
 
@@ -358,16 +438,17 @@ async function startBoss(t) {
       h('div', { class: 'xp-gain' }, `+${res.xp} XP`)),
     h('div', { class: 'btn-row' },
       h('button', { class: 'btn btn-primary', type: 'button', onclick: () => startBoss(t) }, res.won ? 'Rematch' : 'Try again'),
+      !res.won && h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => startFlash({ table: t }) }, `🃏 Study ${t}s`),
       !res.won && h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => startTrain(t) }, `Train ${t}s`),
       h('button', { class: 'btn btn-ghost', type: 'button', onclick: bossMap }, 'All bosses')));
   if (res.won) { confetti(); sfx.win(); } else sfx.lose();
   celebrate(res);
 }
 
-// ---------- benchmark test ----------
+// ---------- Mastery Check ----------
 
 function testIntro() {
-  page('📋 Benchmark', home,
+  page('🏅 Mastery Check', home,
     card(
       h('h2', null, 'The big test'),
       h('ul', { class: 'bullets' },
@@ -396,9 +477,9 @@ async function testResult(rec, { fresh = null, cached = null } = {}) {
   }
   const shareBtn = () => h('button', { class: 'btn btn-primary btn-big', type: 'button', onclick: () => shareUrl(url) }, '📤 Share with a grown-up');
   const back = fresh ? home : historyScreen;
-  page(fresh ? 'Your results' : `Benchmark #${rec.seq}`, back,
+  page(fresh ? 'Your results' : `Mastery Check #${rec.seq}`, back,
     fresh && h('div', { class: 'sum-hero compact' },
-      h('div', { class: 'sum-emoji' }, rec.sum.reason ? '📋' : rec.sum.instant >= TOTAL * 0.9 ? '🏆' : '🎉'),
+      h('div', { class: 'sum-emoji' }, rec.sum.reason ? '🏅' : rec.sum.instant >= TOTAL * 0.9 ? '🏆' : '🎉'),
       h('h2', null, rec.sum.reason ? 'Test saved (incomplete)' : 'Test complete!'),
       fresh.xp > 0 && h('div', { class: 'xp-gain' }, `+${fresh.xp} XP`)),
     shareBtn(),
@@ -435,14 +516,14 @@ function historyScreen() {
   const done = [...player.tests].filter(t => !t.sum.reason).sort((a, b) => a.seq - b.seq);
   page('📈 My results', home,
     !tests.length && card(
-      h('p', null, 'No benchmark tests yet. Take one to see how many facts you\'ve memorized!'),
-      h('button', { class: 'btn btn-primary', type: 'button', onclick: testIntro }, 'Take a benchmark 📋')),
+      h('p', null, 'No Mastery Checks yet. Take one to see how many facts you\'ve memorized!'),
+      h('button', { class: 'btn btn-primary', type: 'button', onclick: testIntro }, 'Take a Mastery Check 🏅')),
     done.length >= 2 && card(
       h('h2', null, 'Facts memorized'),
       lineChart(done.map(t => ({
         y: t.sum.instant,
         xLabel: fmtShortDate(t.start),
-        tip: () => [...tipValue(`${t.sum.instant} / ${TOTAL}`, `Benchmark #${t.seq} · ${fmtDate(t.start)}`)],
+        tip: () => [...tipValue(`${t.sum.instant} / ${TOTAL}`, `Mastery Check #${t.seq} · ${fmtDate(t.start)}`)],
       })), { max: TOTAL, goal: TOTAL, ticks: [0, 20, 40, 60] })),
     tests.length > 0 && h('div', { class: 'test-list' },
       tests.map(t => h('button', { class: 'test-row', type: 'button', onclick: () => testResult(t) },
@@ -562,8 +643,8 @@ function parentCorner() {
     card(
       h('h2', null, 'Checking progress'),
       h('ol', { class: 'steps' },
-        h('li', null, 'Say: “Take a Benchmark test and share your results with me.”'),
-        h('li', null, 'They tap 📋 Benchmark. It takes about 5 minutes: all 78 facts, 6 seconds each.'),
+        h('li', null, 'Say: “Take a Mastery Check and share your results with me.”'),
+        h('li', null, 'They tap 🏅 Mastery Check. It takes about 5 minutes: all 78 facts, 6 seconds each.'),
         h('li', null, 'At the end they tap “Share with a grown-up” and send you the link (Messages, AirDrop…).'),
         h('li', null, 'Open the link on any device. A ✅ means it\'s a genuine, unedited result.')),
       h('p', { class: 'small muted' }, 'Results show every answer and its speed, how many times the app was left, the device, and how many tests were taken in the previous 24 hours — so a retaken or edited test is easy to spot.')),

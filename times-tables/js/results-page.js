@@ -1,4 +1,4 @@
-// results.html: shows a shared benchmark link on any device, no player needed.
+// results.html: shows a shared Mastery Check link on any device, no player needed.
 
 import { h } from './util.js';
 import { readLink, cryptoReady } from './certs.js';
@@ -21,11 +21,11 @@ async function render() {
     return;
   }
   const { test } = link.data;
-  document.title = `${test.name} · Benchmark #${test.seq} · Times Table Quest`;
+  document.title = `${test.name} · Mastery Check #${test.seq} · Times Table Quest`;
   app.replaceChildren(h('div', { class: 'screen page' },
     h('header', { class: 'page-top' },
       h('span', { class: 'spacer' }),
-      h('h1', null, '📋 Benchmark results'),
+      h('h1', null, '🏅 Mastery Check results'),
       h('span', { class: 'spacer' })),
     h('main', { class: 'page-body' },
       resultsView(link, { onSealChange: () => rerender(link) }),

@@ -1,11 +1,11 @@
 // Network-first service worker: always fetch the latest version, fall back to
 // the cached copy when offline (car rides!). The app is cached on first visit.
-const CACHE = 'ttq-v2';
+const CACHE = 'ttq-v3';
 const SHELL = [
   './', './index.html', './results.html', './manifest.webmanifest', './css/app.css',
   './js/app.js', './js/results-page.js', './js/screens.js', './js/game.js', './js/modes.js',
   './js/srs.js', './js/facts.js', './js/store.js', './js/codec.js', './js/certs.js',
-  './js/results-view.js', './js/charts.js', './js/fx.js', './js/sfx.js', './js/util.js',
+  './js/results-view.js', './js/charts.js', './js/flashcards.js', './js/fx.js', './js/sfx.js', './js/util.js',
   './icons/icon-192.png', './icons/apple-touch-icon.png',
 ];
 

@@ -1,4 +1,4 @@
-// The benchmark results page. Used in the app right after a test and by
+// The Mastery Check results page. Used in the app right after a test and by
 // results.html, which renders a shared link on any device.
 
 import { h, fmtDateTime, fmtDuration, fmtSec, fmtShortDate, fmtDate, shortId, plural } from './util.js';
@@ -44,12 +44,12 @@ export function resultsView(link, opts = {}) {
   return h('div', { class: `results ${link.app === 'ok' ? '' : 'tampered'}` },
     verifyBanner(link, test, opts),
     meta.latestSeq > test.seq && h('div', { class: 'warn-box' },
-      `⚠ This is Benchmark #${test.seq}, but ${plural(meta.latestSeq - test.seq, 'newer test')} had been taken when this link was made (latest: #${meta.latestSeq}). Ask for the newest one!`),
+      `⚠ This is Mastery Check #${test.seq}, but ${plural(meta.latestSeq - test.seq, 'newer test')} had been taken when this link was made (latest: #${meta.latestSeq}). Ask for the newest one!`),
     h('section', { class: 'card r-player' },
       h('div', { class: 'r-avatar', 'aria-hidden': 'true' }, AVATARS[test.avatar] || '🙂'),
       h('div', null,
         h('h1', null, test.name),
-        h('div', { class: 'muted' }, `Benchmark #${test.seq} · ${fmtDateTime(test.start)}`),
+        h('div', { class: 'muted' }, `Mastery Check #${test.seq} · ${fmtDateTime(test.start)}`),
         h('div', { class: 'chip' }, `Player ID ${shortId(test.pid)}`))),
 
     h('section', { class: 'card r-hero' },
@@ -74,7 +74,7 @@ export function resultsView(link, opts = {}) {
           aria: `${r} × ${c} = ${r * c}: ${itemDetail(it)}`,
           tip: () => [h('strong', null, `${r} × ${c} = ${r * c}`), h('span', null, `${STATUS[st].icon} ${itemDetail(it)}`)],
         };
-      }, { label: 'Benchmark results grid' }),
+      }, { label: 'Mastery Check results grid' }),
       h('p', { class: 'muted small' }, 'Tap any square for details. Each fact was asked once (3 × 7 and 7 × 3 are the same fact).')),
 
     h('section', { class: 'card' },
@@ -140,21 +140,21 @@ function progressCard(history, test, sum) {
   const points = rows.map(r => ({
     y: r.instant,
     xLabel: fmtShortDate(r.start),
-    tip: () => [...tipValue(`${r.instant} / ${TOTAL} memorized`, `Benchmark #${r.seq} · ${fmtDate(r.start)}`), h('span', null, `${r.correct} correct`)],
+    tip: () => [...tipValue(`${r.instant} / ${TOTAL} memorized`, `Mastery Check #${r.seq} · ${fmtDate(r.start)}`), h('span', null, `${r.correct} correct`)],
   }));
   if (test.reason === REASON.DONE) {
     points.push({
       y: sum.instant, current: true, xLabel: fmtShortDate(test.start),
-      tip: () => [...tipValue(`${sum.instant} / ${TOTAL} memorized`, `Benchmark #${test.seq} (this test) · ${fmtDate(test.start)}`), h('span', null, `${sum.correct} correct`)],
+      tip: () => [...tipValue(`${sum.instant} / ${TOTAL} memorized`, `Mastery Check #${test.seq} (this one) · ${fmtDate(test.start)}`), h('span', null, `${sum.correct} correct`)],
     });
   }
   const stopped = history.filter(r => r.reason !== REASON.DONE);
   return h('section', { class: 'card' },
     h('h2', null, 'Progress over time'),
-    h('p', { class: 'muted small' }, `Facts memorized on each completed benchmark (goal: all ${TOTAL}).`),
+    h('p', { class: 'muted small' }, `Facts memorized on each completed Mastery Check (goal: all ${TOTAL}).`),
     points.length >= 2
       ? lineChart(points, { max: TOTAL, goal: TOTAL, ticks: [0, 20, 40, 60] })
-      : h('p', null, points.length ? '📈 This is the first completed benchmark — the progress line appears after the next one.' : 'No completed benchmarks yet.'),
+      : h('p', null, points.length ? '📈 This is the first completed Mastery Check — the progress line appears after the next one.' : 'No completed Mastery Checks yet.'),
     stopped.length > 0 && h('p', { class: 'muted small' },
       `Also ${plural(stopped.length, 'earlier test')} stopped early: ${stopped.map(r => `#${r.seq}`).join(', ')}.`));
 }
