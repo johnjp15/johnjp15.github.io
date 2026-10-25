@@ -1,0 +1,16 @@
+{
+  "name": "Times Table Quest",
+  "short_name": "Times Quest",
+  "description": "Learn every times table from 1 × 1 to 12 × 12 by heart.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#120e2b",
+  "theme_color": "#120e2b",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
