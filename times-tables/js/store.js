@@ -69,6 +69,8 @@ function defaults(id) {
     testSeq: 0,
     restores: 0,
     cards: {}, // flash-card decks studied: { [table|'tricky'|'custom']: { times, last } }
+    days: {}, // practice per calendar day: { 'YYYY-MM-DD': { c: correct, a: answers, ms: answer time, f: flash cards } }
+    lastActive: null,
     badges: {},
     stats: { answers: 0, correct: 0, fast: 0, bestCombo: 0, rounds: 0 },
     settings: { sound: true },
@@ -116,6 +118,12 @@ export function createPlayer({ id = newPlayerId(), name, avatar }) {
   return p;
 }
 
+function mergeDays(a = {}, b = {}) {
+  const out = { ...b };
+  for (const [k, d] of Object.entries(a)) out[k] = !out[k] || d.a + d.f >= out[k].a + out[k].f ? d : out[k];
+  return out;
+}
+
 /**
  * Combine a backup with what's already on this device. Nothing is lost: every
  * test is kept, the test counter never goes back, and the restore is counted
@@ -146,6 +154,8 @@ export function mergeBackup(local, backup) {
     blitzBest: Math.max(local.blitzBest || 0, base.blitzBest || 0),
     badges: { ...base.badges, ...local.badges },
     cards: { ...base.cards, ...local.cards },
+    days: mergeDays(local.days, base.days),
+    lastActive: Math.max(local.lastActive || 0, base.lastActive || 0) || null,
     streak: later(local.streak, base.streak),
     daily: later(local.daily, base.daily),
     tests,
@@ -213,7 +223,30 @@ export function recordAnswer(p, q, res, { placement = false, now = Date.now() } 
   if (res.fast) p.stats.fast++;
   p.stats.bestCombo = Math.max(p.stats.bestCombo, res.combo || 0);
   if (res.correct) bumpDaily(p, now);
+  const d = dayRecord(p, now);
+  d.a++;
+  if (res.correct) d.c++;
+  d.ms += Math.min(Math.round(res.ms || 0), 10000);
   return outcome;
+}
+
+/** Flash cards studied (self-graded, so they count as practice but not as correct answers). */
+export function recordCards(p, n, now = Date.now()) {
+  if (n > 0) dayRecord(p, now).f += n;
+}
+
+const KEEP_DAYS = 70;
+
+function dayRecord(p, now) {
+  p.lastActive = now;
+  const days = (p.days ||= {});
+  const key = dayKey(now);
+  if (!days[key]) {
+    days[key] = { c: 0, a: 0, ms: 0, f: 0 };
+    const keys = Object.keys(days).sort();
+    for (const old of keys.slice(0, Math.max(0, keys.length - KEEP_DAYS))) delete days[old];
+  }
+  return days[key];
 }
 
 function bumpDaily(p, now) {

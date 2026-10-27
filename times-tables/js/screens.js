@@ -12,6 +12,8 @@ import { resultsView } from './results-view.js';
 import { factGrid, lineChart, ring, tipValue } from './charts.js';
 import { confetti, toast, dialog } from './fx.js';
 import { sfx, setSound, unlockAudio } from './sfx.js';
+import * as family from './family.js';
+import { familyBoard, familyStrip } from './family-view.js';
 
 const { AVATARS, DAILY_GOAL } = store;
 let player = null;
@@ -26,7 +28,9 @@ export async function boot() {
   };
   // iOS only lets audio start inside certain gestures, so try on several.
   for (const ev of ['pointerdown', 'touchend', 'click', 'keydown']) document.addEventListener(ev, onGesture, { capture: true });
-  window.addEventListener('hashchange', () => { if (location.hash.startsWith('#restore=')) location.reload(); });
+  window.addEventListener('hashchange', () => { if (/^#(restore|family)=/.test(location.hash)) location.reload(); });
+  // Share progress when the app is put away (keepalive lets the request finish).
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && player) family.syncPlayer(player); });
   document.addEventListener('gesturestart', e => e.preventDefault()); // no pinch-zoom mid-game
   const syncHeight = () => document.documentElement.style.setProperty('--app-h', `${window.innerHeight}px`);
   syncHeight();
@@ -38,6 +42,12 @@ export async function boot() {
 
   if (!cryptoReady()) {
     return mount(h('div', { class: 'screen onboard' }, h('h1', null, '😕'), h('p', null, 'This app needs a secure (https) page to work. Open it from its GitHub Pages address.')));
+  }
+
+  let invite = null;
+  if (location.hash.startsWith('#family=')) {
+    invite = family.parseInvite(location.hash.slice('#family='.length));
+    history.replaceState(null, '', location.pathname + location.search);
   }
 
   if (location.hash.startsWith('#restore=')) {
@@ -56,8 +66,9 @@ export async function boot() {
   }
 
   player = store.currentPlayer();
-  if (!player) return onboarding();
-  setSound(player.settings.sound);
+  if (player) setSound(player.settings.sound);
+  if (invite) return inviteFlow(invite);
+  if (!player) return family.getFamily()?.viewer ? familyScreen() : onboarding();
   home();
   if (interrupted) {
     dialog({ icon: '🏅', title: 'Unfinished Mastery Check', body: `Mastery Check #${interrupted.seq} was interrupted (the app was closed or reloaded), so it was saved as incomplete.` });
@@ -107,10 +118,22 @@ function onboarding({ adding = false } = {}) {
     !adding && h('p', { class: 'lead' }, 'Learn every times table from 1\u00a0×\u00a01 to 12\u00a0×\u00a012 — by heart!'),
     h('form', {
       class: 'onboard-form',
-      onsubmit: e => {
+      onsubmit: async e => {
         e.preventDefault();
+        e.submitter?.setAttribute('disabled', '');
         player = store.createPlayer({ name: nameInput.value, avatar });
         setSound(player.settings.sound);
+        const pending = store.lsGet('pendingInvite');
+        if (pending) {
+          store.lsSet('pendingInvite', null);
+          try {
+            const f = await family.joinFamily(pending, { players: [player] });
+            await family.syncPlayer(player, { force: true });
+            toast(`👪 Joined ${f.name}`);
+          } catch {
+            toast('⚠️ Couldn\'t join the family — open the invite link again');
+          }
+        }
         firstRun();
       },
     },
@@ -119,7 +142,8 @@ function onboarding({ adding = false } = {}) {
     h('label', { class: 'field-label' }, 'Pick your buddy'),
     pick,
     h('button', { class: 'btn btn-primary btn-big', type: 'submit' }, 'Let\'s go! 🚀'),
-    adding && h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => home() }, 'Cancel'))));
+    adding && h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => (player ? home() : familyScreen()) }, 'Cancel'),
+    !adding && family.familyEnabled() && h('button', { class: 'btn btn-ghost', type: 'button', onclick: grownUpSetup }, '👀 I\'m a grown-up — set up family tracking'))));
 }
 
 async function firstRun() {
@@ -197,6 +221,7 @@ function home() {
     h('div', { class: 'level' },
       h('div', { class: 'level-row' }, h('b', null, `Level ${lvl.level}`), h('span', null, lvl.title), h('span', { class: 'muted small' }, `${lvl.into}/${lvl.need} XP`)),
       h('div', { class: 'xpbar' }, h('i', { style: { width: `${(lvl.into / lvl.need) * 100}%` } }))),
+    familySlot(),
     h('button', { class: 'card progress-card', type: 'button', onclick: mapScreen },
       h('div', { class: 'ring-wrap' }, ring(mem, TOTAL), h('div', { class: 'ring-label' }, h('b', null, String(mem)), h('span', null, `of ${TOTAL}`))),
       h('div', { class: 'pc-text' },
@@ -223,6 +248,20 @@ function home() {
     installTip()));
 }
 
+/** Home's family strip: shows the cached board at once, then refreshes. */
+function familySlot() {
+  const f = family.getFamily();
+  if (!f || !family.familyEnabled()) return null;
+  const slot = h('div', { class: 'fam-slot' });
+  const show = r => { if (r?.board) slot.replaceChildren(familyStrip(r, familyScreen)); };
+  if (f.board) show({ board: f.board });
+  (async () => {
+    await family.syncPlayer(player);
+    show(await family.fetchBoard());
+  })();
+  return slot;
+}
+
 function modeTile(icon, title, sub, onclick, cls) {
   return h('button', { class: `mode-tile ${cls}`, type: 'button', onclick },
     h('span', { class: 'mt-icon' }, icon), h('b', null, title), h('small', null, sub));
@@ -240,6 +279,7 @@ function installTip() {
 // ---------- celebrations ----------
 
 async function celebrate(res) {
+  if (player) family.syncPlayer(player);
   if (!res) return;
   for (const b of res.badges || []) {
     toast(`${b.icon} New badge: ${b.name}!`, 3200);
@@ -345,7 +385,11 @@ async function startFlash(deck) {
   const cards = custom || (tricky ? trickyCards(player) : tableCards(table));
   const title = custom ? `🃏 ${label}` : tricky ? '🧩 Tricky' : `🃏 ${table}s`;
   const res = await runFlashcards({ title, cards: mix || tricky || custom ? shuffle(cards) : cards, player });
-  if (res.quit && res.known === 0) return table ? flashMenu() : home();
+  store.recordCards(player, res.known + res.again);
+  if (res.quit && res.known === 0) {
+    store.savePlayer(player);
+    return table ? flashMenu() : home();
+  }
 
   let xp = 0;
   if (!res.quit) {
@@ -586,7 +630,8 @@ function settings() {
       h('p', { class: 'small' }, isIOS()
         ? 'In Safari, tap Share ⬆︎ → “Add to Home Screen”. The app opens full-screen and its progress is protected from Safari\'s 7-day cleanup.'
         : 'Use your browser\'s menu → “Install app” or “Add to Home screen”.')),
-    h('button', { class: 'btn btn-ghost wide', type: 'button', onclick: parentGate }, '👪 Parent corner'),
+    family.getFamily() && h('button', { class: 'btn btn-ghost wide', type: 'button', onclick: familyScreen }, `👪 ${family.getFamily().name}`),
+    h('button', { class: 'btn btn-ghost wide', type: 'button', onclick: parentGate }, '🔒 Parent corner'),
     h('p', { class: 'muted small center' }, `Player ID ${shortId(player.id)} · Times Table Quest`));
 }
 
@@ -699,6 +744,8 @@ function parentCorner() {
         },
       }, `Back up ${player.name}`)),
 
+    family.familyEnabled() && familyCard(),
+
     card(
       h('h2', null, '👤 Players'),
       store.listPlayers().map(x => h('div', { class: 'player-row' },
@@ -727,6 +774,7 @@ async function removePlayer(id) {
     buttons: [{ label: 'Delete', value: true, danger: true }, { label: 'Cancel', value: false }],
   });
   if (!ok) return;
+  if (family.getFamily()?.tokens[id]) await family.removeMember(id).catch(() => {});
   store.deletePlayer(id);
   if (player.id === id) {
     player = store.currentPlayer();
@@ -735,3 +783,254 @@ async function removePlayer(id) {
   parentCorner();
 }
 
+
+// ---------- family ----------
+
+/** Ask for a short piece of text in a dialog. */
+async function askText({ icon, title, body, value = '', placeholder = '', ok = 'OK', max = 24 }) {
+  const input = h('input', { class: 'input', value, placeholder, maxlength: max, autocapitalize: 'words', 'aria-label': title });
+  const res = await dialog({
+    icon, title, body: h('div', null, body && h('p', null, body), input),
+    buttons: [{ label: ok, value: true, primary: true }, { label: 'Cancel', value: false }],
+  });
+  return res ? clip(input.value, max) : null;
+}
+
+const familyError = e => (e?.status === 403 || e?.status === 404
+  ? 'This invite link doesn\'t work anymore. Ask for a new one.'
+  : 'Couldn\'t reach the family server. Check the internet connection and try again.');
+
+async function shareInvite(f) {
+  const url = family.inviteLink(f);
+  const text = `Join ${f.name} on Times Table Quest so we can see each other's practice:`;
+  if (navigator.share) {
+    try { await navigator.share({ title: `Join ${f.name}`, text, url }); return; } catch (e) { if (e?.name === 'AbortError') return; }
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    toast('🔗 Invite link copied');
+  } catch {
+    await dialog({ title: 'Invite link', body: h('textarea', { class: 'input link-box', readonly: true, rows: 4 }, url) });
+  }
+}
+
+/** Opened an invite link on this device. */
+async function inviteFlow(invite) {
+  const proceed = () => (player ? home() : family.getFamily()?.viewer ? familyScreen() : onboarding());
+  if (!family.familyEnabled()) {
+    await dialog({ icon: '👪', title: 'Not switched on yet', body: 'Family sharing isn\'t switched on in this app yet.' });
+    return proceed();
+  }
+  if (!invite) {
+    await dialog({ icon: '⚠️', title: 'Can\'t join', body: 'This invite link is incomplete. Ask for it to be sent again.' });
+    return proceed();
+  }
+  mount(h('div', { class: 'screen onboard' }, h('div', { class: 'sum-emoji' }, '👪'), h('p', { class: 'lead' }, 'Checking the invite…')));
+  let board;
+  try {
+    board = await family.peekFamily(invite);
+  } catch (e) {
+    await dialog({ icon: '⚠️', title: 'Can\'t join', body: familyError(e) });
+    return proceed();
+  }
+  const current = family.getFamily();
+  const players = store.listPlayers().map(x => store.loadPlayer(x.id)).filter(Boolean);
+  if (current?.id === invite.id && players.every(p => current.tokens[p.id])) {
+    toast(`👪 Already in ${board.name}`);
+    return proceed();
+  }
+  const leaving = current && current.id !== invite.id ? ` This device will leave ${current.name}.` : '';
+  let choice;
+  if (players.length) {
+    const names = players.map(p => p.name).join(' & ');
+    choice = await dialog({
+      icon: '👪', title: `Join ${board.name}?`,
+      body: `${names} will share practice progress with the family and see everyone else's.${leaving}`,
+      buttons: [{ label: 'Join', value: 'player', primary: true }, { label: 'Cancel', value: null }],
+    });
+  } else {
+    choice = await dialog({
+      icon: '👪', title: `Join ${board.name}`,
+      body: `Is this phone for someone who'll practice, or a grown-up who wants to watch?${leaving}`,
+      buttons: [
+        { label: '🎮 I\'ll practice', value: 'player', primary: true },
+        { label: '👀 I\'m a grown-up, just watching', value: 'viewer' },
+        { label: 'Cancel', value: null },
+      ],
+    });
+  }
+  try {
+    if (choice === 'player' && players.length) {
+      await family.joinFamily(invite, { players });
+      await Promise.all(players.map(p => family.syncPlayer(p, { force: true })));
+      toast(`👪 Joined ${board.name}`);
+      return familyScreen();
+    }
+    if (choice === 'player') {
+      store.lsSet('pendingInvite', invite);
+      return onboarding();
+    }
+    if (choice === 'viewer') {
+      const name = await askText({ icon: '👀', title: 'What should the kids call you?', placeholder: 'Mom, Dad, Grandpa…', ok: 'Join' });
+      if (!name) return proceed();
+      await family.joinFamily(invite, { viewerName: name });
+      return familyScreen();
+    }
+  } catch (e) {
+    await dialog({ icon: '⚠️', title: 'Can\'t join', body: familyError(e) });
+  }
+  return proceed();
+}
+
+/** A grown-up's own phone: create the family and watch, no player needed. */
+async function grownUpSetup() {
+  const nameInput = h('input', { class: 'input', placeholder: 'Mom, Dad, Grandpa…', maxlength: 24, autocapitalize: 'words', 'aria-label': 'Your name' });
+  const famInput = h('input', { class: 'input', value: 'Our family', maxlength: 40, autocapitalize: 'words', 'aria-label': 'Family name' });
+  const msg = h('p', { class: 'small', 'aria-live': 'polite' });
+  page('👀 Family tracking', onboarding,
+    card(
+      h('p', null, 'Set up a family on this phone to see every kid\'s practice: who practiced today, streaks, facts memorized and Mastery Checks.'),
+      h('p', { class: 'small muted' }, 'You won\'t need a player profile. Next you\'ll get an invite link to send to each kid\'s device.')),
+    h('form', {
+      class: 'card stack-form',
+      onsubmit: async e => {
+        e.preventDefault();
+        const name = clip(nameInput.value, 24);
+        if (!name) { msg.textContent = 'Add your name so the kids know who\'s watching.'; return; }
+        msg.textContent = 'Creating…';
+        try {
+          const f = await family.createFamily(clip(famInput.value, 40) || 'Our family');
+          await family.joinFamily({ id: f.id, secret: f.secret }, { viewerName: name });
+          await familyScreen();
+          shareInvite(family.getFamily());
+        } catch (err) {
+          msg.textContent = familyError(err);
+        }
+      },
+    },
+    h('label', { class: 'field-label' }, 'Your name'), nameInput,
+    h('label', { class: 'field-label' }, 'Family name'), famInput,
+    h('button', { class: 'btn btn-primary', type: 'submit' }, 'Create family'), msg),
+    card(h('p', { class: 'small' }, 'Already have an invite link? Just open it on this phone.')));
+}
+
+/** The family board. On a grown-up's phone (no player) it's the home screen. */
+async function familyScreen() {
+  const f = family.getFamily();
+  if (!f) return player ? familySetup() : onboarding();
+  const viewerHome = !player;
+  const me = Object.keys(f.tokens);
+  const body = h('div', null, h('p', { class: 'muted center' }, 'Loading…'));
+  const stamp = h('p', { class: 'muted small center' });
+  page(`👪 ${f.name}`, viewerHome ? null : home,
+    body,
+    stamp,
+    h('button', { class: 'btn btn-ghost wide', type: 'button', onclick: () => render(true) }, '🔄 Refresh'),
+    viewerHome && card(
+      h('h3', null, '👀 Grown-up tools'),
+      h('div', { class: 'stack-form' },
+        h('button', { class: 'btn btn-primary', type: 'button', onclick: () => shareInvite(family.getFamily()) }, '📨 Invite someone'),
+        h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => manageFamily(familyScreen) }, '👥 Manage members'),
+        h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => onboarding({ adding: true }) }, '➕ Add a player on this phone'))),
+    !viewerHome && h('p', { class: 'muted small center' }, 'Grown-ups manage the family in ⚙️ → Parent corner.'));
+
+  async function render(force) {
+    if (!body.isConnected) return;
+    const r = await family.fetchBoard({ force });
+    if (!body.isConnected) return;
+    if (!r?.board) {
+      body.replaceChildren(card(h('p', null, r?.gone ? 'This family no longer exists, or this device was removed from it.' : '📡 Couldn\'t reach the family server. Check the internet connection and refresh.')));
+      return;
+    }
+    body.replaceChildren(familyBoard(r, me));
+    stamp.textContent = r.offline ? '' : `Updated ${fmtAgo(r.fetchedAt || Date.now())}`;
+  }
+
+  if (player) await family.syncPlayer(player);
+  await render(true);
+  const timer = setInterval(() => (body.isConnected ? render(true) : clearInterval(timer)), 30000);
+}
+
+/** Before joining a family (reached from the Parent corner on a kid's device). */
+function familySetup() {
+  const famInput = h('input', { class: 'input', value: `${player.name}'s family`, maxlength: 40, autocapitalize: 'words', 'aria-label': 'Family name' });
+  const msg = h('p', { class: 'small', 'aria-live': 'polite' });
+  page('👪 Family', parentCorner,
+    card(
+      h('h2', null, 'See each other\'s practice'),
+      h('p', null, 'Everyone in a family sees who practiced today, streaks, facts memorized and Mastery Checks — each on their own phone.')),
+    h('form', {
+      class: 'card stack-form',
+      onsubmit: async e => {
+        e.preventDefault();
+        msg.textContent = 'Creating…';
+        try {
+          const f = await family.createFamily(clip(famInput.value, 40) || 'Our family');
+          const players = store.listPlayers().map(x => store.loadPlayer(x.id)).filter(Boolean);
+          await family.joinFamily({ id: f.id, secret: f.secret }, { players });
+          await Promise.all(players.map(p => family.syncPlayer(p, { force: true })));
+          await familyScreen();
+          shareInvite(family.getFamily());
+        } catch (err) {
+          msg.textContent = familyError(err);
+        }
+      },
+    },
+    h('h3', null, 'Start a family'), famInput,
+    h('button', { class: 'btn btn-primary', type: 'submit' }, 'Create family'), msg),
+    card(h('h3', null, 'Already have an invite?'), h('p', { class: 'small' }, 'Open the invite link on this device and it joins automatically.')));
+}
+
+/** Parent corner card. */
+function familyCard() {
+  const f = family.getFamily();
+  if (!f) {
+    return card(
+      h('h2', null, '👪 Family'),
+      h('p', { class: 'small' }, 'Let everyone in the family see each other\'s practice on their own phones. Tip: create it on your own phone (“I\'m a grown-up” on the welcome screen) and send invite links to the kids.'),
+      h('button', { class: 'btn btn-primary', type: 'button', onclick: familySetup }, 'Set up a family'));
+  }
+  return card(
+    h('h2', null, `👪 ${f.name}`),
+    h('div', { class: 'stack-form' },
+      h('button', { class: 'btn btn-primary', type: 'button', onclick: () => shareInvite(f) }, '📨 Invite someone'),
+      h('button', { class: 'btn btn-ghost', type: 'button', onclick: familyScreen }, 'See the family board'),
+      h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => manageFamily(parentCorner) }, '👥 Manage members')),
+    h('p', { class: 'small muted' }, 'Anyone with the invite link can join, so only send it to family.'));
+}
+
+async function manageFamily(back) {
+  const f = family.getFamily();
+  const r = await family.fetchBoard({ force: true });
+  const members = r?.board?.members || [];
+  const localPlayers = store.listPlayers();
+  const removedHere = localPlayers.filter(x => f.removed?.[x.id]);
+  page('👥 Members', back,
+    card(
+      members.length ? members.map(m => h('div', { class: 'player-row' },
+        h('span', null, `${m.role === 'viewer' ? '🧑' : AVATARS[m.avatar] || '🙂'} ${m.name}${m.role === 'viewer' ? ' (watching)' : ''}`),
+        h('button', {
+          class: 'btn btn-small btn-danger', type: 'button',
+          onclick: async () => {
+            const ok = await dialog({ title: `Remove ${m.name}?`, body: 'They disappear from the family board. Their own progress stays on their device.', buttons: [{ label: 'Remove', value: true, danger: true }, { label: 'Cancel', value: false }] });
+            if (!ok) return;
+            await family.removeMember(m.memberId).catch(e => toast(`⚠️ ${familyError(e)}`));
+            manageFamily(back);
+          },
+        }, 'Remove'))) : h('p', { class: 'muted' }, r ? 'No members yet.' : 'Couldn\'t reach the family server.')),
+    removedHere.length > 0 && card(
+      h('h3', null, 'Removed players on this device'),
+      removedHere.map(x => h('div', { class: 'player-row' },
+        h('span', null, `${AVATARS[x.avatar] || '🙂'} ${x.name}`),
+        h('button', { class: 'btn btn-small', type: 'button', onclick: async () => { await family.rejoinPlayer(store.loadPlayer(x.id)).catch(() => {}); manageFamily(back); } }, 'Add back')))),
+    h('button', {
+      class: 'btn btn-ghost wide', type: 'button',
+      onclick: async () => {
+        const ok = await dialog({ title: `Leave ${f.name}?`, body: 'This device stops sharing and seeing family progress. You can rejoin with an invite link.', buttons: [{ label: 'Leave family', value: true, danger: true }, { label: 'Cancel', value: false }] });
+        if (!ok) return;
+        await family.leaveFamily();
+        toast('Left the family');
+        if (player) home(); else onboarding();
+      },
+    }, 'Leave family on this device'));
+}

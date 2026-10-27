@@ -520,6 +520,48 @@ p { margin: 0.4em 0; }
 .fc-actions { display: flex; gap: 10px; }
 .fc-actions .btn { flex: 1; min-height: 60px; font-size: 1.15rem; }
 
+/* ---------- family ---------- */
+
+.fam-strip { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; color: var(--ink); cursor: pointer; }
+.fam-strip-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.fam-strip-text b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fam-faces { display: flex; padding-left: 6px; }
+.fam-face { position: relative; font-size: 1.7rem; margin-left: -6px; }
+.fam-face i {
+  position: absolute; right: -4px; bottom: -2px; width: 18px; height: 18px; border-radius: 50%;
+  display: grid; place-items: center; font-style: normal; font-size: 0.68rem; font-weight: 900; color: #fff;
+  background: var(--surface-3); border: 2px solid var(--surface);
+}
+.fam-face.some i { background: var(--warn); }
+.fam-face.done i { background: var(--good); }
+
+.fam-board { display: flex; flex-direction: column; gap: 12px; }
+.fam-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.fam-summary .hero-num { font-size: 3rem; }
+.fam-streak { text-align: center; padding: 10px 14px; border-radius: 16px; background: var(--surface-2); filter: grayscale(1); opacity: 0.7; }
+.fam-streak.on { filter: none; opacity: 1; }
+.fam-streak b { display: block; font-size: 1.6rem; }
+.fam-streak small { color: var(--ink-3); font-weight: 800; font-size: 0.72rem; line-height: 1.2; }
+.fam-card { display: flex; flex-direction: column; gap: 10px; }
+.fam-card.me { border-color: rgba(255, 201, 60, 0.45); }
+.fam-head { display: flex; align-items: center; gap: 10px; }
+.fam-av { font-size: 2.2rem; }
+.fam-name { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; }
+.fam-name b { font-size: 1.15rem; }
+.fam-name .chip { margin-top: 2px; }
+.fam-chip { align-self: flex-start; padding: 6px 12px; border-radius: 99px; font-weight: 900; font-size: 0.92rem; }
+.fam-chip.done { background: rgba(12, 163, 12, 0.2); color: #8af58a; }
+.fam-chip.some { background: rgba(250, 178, 25, 0.16); color: var(--warn); }
+.fam-chip.none { background: rgba(208, 59, 59, 0.18); color: #ff9e9e; }
+.fam-week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.fam-day { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.fam-day i { width: 100%; height: 14px; border-radius: 4px; background: var(--surface-3); }
+.fam-day.some i { background: var(--warn); }
+.fam-day.goal i { background: var(--good); }
+.fam-day small { font-size: 0.7rem; font-weight: 800; color: var(--ink-3); }
+.fam-stats { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 0.88rem; font-weight: 700; color: var(--ink-2); }
+.fam-stats b { color: var(--ink); }
+
 /* ---------- summaries ---------- */
 
 .sum-hero { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 0; }
