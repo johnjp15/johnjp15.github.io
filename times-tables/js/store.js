@@ -73,7 +73,7 @@ function defaults(id) {
     lastActive: null,
     badges: {},
     stats: { answers: 0, correct: 0, fast: 0, bestCombo: 0, rounds: 0 },
-    settings: { sound: true },
+    settings: { sound: true, music: true, loud: true },
   };
 }
 

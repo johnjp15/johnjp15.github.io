@@ -11,9 +11,13 @@ import { shareLink, readLink, backupLink, readBackup, deviceSeal, setDeviceSeal,
 import { resultsView } from './results-view.js';
 import { factGrid, lineChart, ring, tipValue } from './charts.js';
 import { confetti, toast, dialog } from './fx.js';
-import { sfx, setSound, unlockAudio } from './sfx.js';
+import { sfx, applySound, unlockAudio, onSoundChange } from './sfx.js';
 import * as family from './family.js';
 import { familyBoard, familyStrip } from './family-view.js';
+import { runDuel } from './duel.js';
+import { RACE_TARGET, fmtRace, newSeed } from './race.js';
+import { raceMode } from './race-mode.js';
+import { connectLive, onLive, liveSend, liveState, toLocal } from './live.js';
 
 const { AVATARS, DAILY_GOAL } = store;
 let player = null;
@@ -32,6 +36,11 @@ export async function boot() {
   // Share progress when the app is put away (keepalive lets the request finish).
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && player) family.syncPlayer(player); });
   document.addEventListener('gesturestart', e => e.preventDefault()); // no pinch-zoom mid-game
+  onSoundChange(next => {
+    if (!player) return;
+    player.settings = { ...player.settings, music: next.music };
+    store.savePlayer(player);
+  });
   const syncHeight = () => document.documentElement.style.setProperty('--app-h', `${window.innerHeight}px`);
   syncHeight();
   window.addEventListener('resize', syncHeight);
@@ -66,7 +75,9 @@ export async function boot() {
   }
 
   player = store.currentPlayer();
-  if (player) setSound(player.settings.sound);
+  if (player) applySound(player.settings);
+  listenForInvites();
+  ensureLive();
   if (invite) return inviteFlow(invite);
   if (!player) return family.getFamily()?.viewer ? familyScreen() : onboarding();
   home();
@@ -122,7 +133,7 @@ function onboarding({ adding = false } = {}) {
         e.preventDefault();
         e.submitter?.setAttribute('disabled', '');
         player = store.createPlayer({ name: nameInput.value, avatar });
-        setSound(player.settings.sound);
+        applySound(player.settings);
         const pending = store.lsGet('pendingInvite');
         if (pending) {
           store.lsSet('pendingInvite', null);
@@ -173,7 +184,7 @@ async function playerSheet() {
     if (p) {
       player = p;
       store.setCurrent(p.id);
-      setSound(p.settings.sound);
+      applySound(p.settings);
     }
   }
   home();
@@ -203,6 +214,7 @@ async function restoreFlow(frag) {
 // ---------- home ----------
 
 function home() {
+  ensureLive();
   const p = player;
   const mem = memorizedCount(p);
   const lvl = store.levelInfo(p.xp);
@@ -242,9 +254,10 @@ function home() {
     h('div', { class: 'mode-grid' },
       modeTile('👾', 'Boss Battles', `${wins}/12 defeated`, bossMap, 't-pink'),
       modeTile('⚡', 'Blitz', p.blitzBest ? `Best: ${p.blitzBest}` : '60 seconds', startBlitz, 't-cyan'),
+      modeTile('⚔️', 'Versus', 'Race someone to 15', versusMenu, 't-orange'),
       modeTile('🏅', 'Mastery Check', lastTest ? `Last: ${fmtAgo(lastTest.start)}` : 'Test yourself', testIntro, 't-gold'),
-      modeTile('🗺️', 'My Map', `${mem}/${TOTAL} facts`, mapScreen, 't-violet')),
-    h('button', { class: 'btn btn-ghost wide', type: 'button', onclick: historyScreen }, '📈 My results & sharing'),
+      modeTile('🗺️', 'My Map', `${mem}/${TOTAL} facts`, mapScreen, 't-violet'),
+      modeTile('📈', 'My Results', p.tests.length ? `${plural(p.tests.length, 'check')} · share` : 'Share with a grown-up', historyScreen, 't-green')),
     installTip()));
 }
 
@@ -281,6 +294,7 @@ function installTip() {
 async function celebrate(res) {
   if (player) family.syncPlayer(player);
   if (!res) return;
+  if (res.xp > 0) setTimeout(() => sfx.coin(), 350);
   for (const b of res.badges || []) {
     toast(`${b.icon} New badge: ${b.name}!`, 3200);
     confetti(80);
@@ -609,12 +623,24 @@ function mapScreen() {
 // ---------- settings & parent corner ----------
 
 function settings() {
-  const sound = h('input', {
-    type: 'checkbox', class: 'switch', checked: player.settings.sound, 'aria-label': 'Sound effects',
-    onchange: e => { player.settings.sound = e.target.checked; setSound(e.target.checked); store.savePlayer(player); },
-  });
+  const toggle = (key, label, hint) => {
+    const input = h('input', {
+      type: 'checkbox', class: 'switch', checked: player.settings[key] !== false, 'aria-label': label,
+      onchange: e => {
+        player.settings = { ...player.settings, [key]: e.target.checked };
+        applySound(player.settings);
+        store.savePlayer(player);
+        if (key === 'sound' && e.target.checked) sfx.correct(3);
+      },
+    });
+    return h('label', { class: 'setting' }, h('span', null, label, hint && h('small', { class: 'muted setting-hint' }, hint)), input);
+  };
   page('⚙️ Settings', home,
-    card(h('label', { class: 'setting' }, h('span', null, '🔊 Sound effects'), sound)),
+    card(
+      h('div', { class: 'stack-form' },
+        toggle('sound', '🔊 Sounds'),
+        toggle('music', '🎵 Music while playing'),
+        isIOS() && toggle('loud', '🔔 Play sounds on silent', 'iPhones mute games when the side switch is on silent. Turn this on to hear sounds anyway.'))),
     card(
       h('h3', null, 'Players on this device'),
       h('div', { class: 'player-list' },
@@ -623,7 +649,7 @@ function settings() {
           h('span', { class: 'muted small' }, `ID ${shortId(x.id)}`),
           x.id === player.id
             ? h('span', { class: 'chip' }, 'Playing')
-            : h('button', { class: 'btn btn-small', type: 'button', onclick: () => { player = store.loadPlayer(x.id); store.setCurrent(x.id); setSound(player.settings.sound); home(); } }, 'Switch')))),
+            : h('button', { class: 'btn btn-small', type: 'button', onclick: () => { player = store.loadPlayer(x.id); store.setCurrent(x.id); applySound(player.settings); home(); } }, 'Switch')))),
       h('button', { class: 'btn btn-ghost wide', type: 'button', onclick: () => onboarding({ adding: true }) }, '➕ Add a player')),
     !isStandalone() && card(
       h('h3', null, '📲 Install on the Home Screen'),
@@ -918,6 +944,7 @@ async function grownUpSetup() {
 async function familyScreen() {
   const f = family.getFamily();
   if (!f) return player ? familySetup() : onboarding();
+  ensureLive();
   const viewerHome = !player;
   const me = Object.keys(f.tokens);
   const body = h('div', null, h('p', { class: 'muted center' }, 'Loading…'));
@@ -942,13 +969,17 @@ async function familyScreen() {
       body.replaceChildren(card(h('p', null, r?.gone ? 'This family no longer exists, or this device was removed from it.' : '📡 Couldn\'t reach the family server. Check the internet connection and refresh.')));
       return;
     }
-    body.replaceChildren(familyBoard(r, me));
+    body.replaceChildren(familyBoard(r, me, liveState.online));
     stamp.textContent = r.offline ? '' : `Updated ${fmtAgo(r.fetchedAt || Date.now())}`;
   }
 
   if (player) await family.syncPlayer(player);
   await render(true);
   const timer = setInterval(() => (body.isConnected ? render(true) : clearInterval(timer)), 30000);
+  const off = onLive(type => {
+    if (!body.isConnected) return off();
+    if (type === 'presence' || type === 'hello') render(false);
+  });
 }
 
 /** Before joining a family (reached from the Parent corner on a kid's device). */
@@ -1033,4 +1064,327 @@ async function manageFamily(back) {
         if (player) home(); else onboarding();
       },
     }, 'Leave family on this device'));
+}
+
+// ---------- versus ----------
+
+function versusMenu() {
+  const inFamily = family.familyEnabled() && family.getFamily();
+  page('⚔️ Versus', home,
+    h('p', { class: 'muted center' }, `Race to ${RACE_TARGET} correct answers. Everyone gets the same questions. A wrong answer costs 1.5 seconds!`),
+    h('button', { class: 'btn btn-primary vs-option', type: 'button', onclick: duelSetup },
+      h('span', { class: 'bm-icon' }, '📱'),
+      h('span', { class: 'bm-text' }, h('b', null, 'Duel on this phone'), h('small', null, 'Two players, one screen, face to face'))),
+    versusFamilyOptions(),
+    !inFamily && family.familyEnabled() && card(h('p', { class: 'small' }, '👪 Join your family (ask a grown-up) to challenge each other on your own phones — even when you\'re not together.')));
+}
+
+// ---------- versus with the family (on your own phones) ----------
+
+/** Keep the live link open as whoever uses this device (player, or a watching grown-up). */
+function ensureLive() {
+  const f = family.familyEnabled() && family.getFamily();
+  const id = player?.id || f?.viewer?.id;
+  if (f && id && f.tokens?.[id] && liveState.me !== id) connectLive(id);
+}
+
+const seenInvites = new Set();
+function listenForInvites() {
+  onLive((type, r) => {
+    if (type === 'challenge') return;
+    if (type !== 'race' || !player || r.state !== 'lobby' || r.host === player.id || r.players[player.id]) return;
+    if (seenInvites.has(r.id) || Date.now() - toLocal(r.created) > 60000) return;
+    seenInvites.add(r.id);
+    const host = r.players[r.host];
+    if (document.documentElement.classList.contains('in-game')) {
+      toast(`⚡ ${host.name} wants to race — open Versus to join`);
+      return;
+    }
+    sfx.coin();
+    dialog({
+      icon: '⚡', title: `${host.name} wants to race!`, body: `First to ${RACE_TARGET} correct wins.`,
+      buttons: [{ label: '🏁 Join the race', value: true, primary: true }, { label: 'Not now', value: false }],
+    }).then(ok => { if (ok) joinLiveRace(r.id); });
+  });
+}
+
+const avatarOf = a => (typeof a === 'number' ? AVATARS[a] || '🙂' : a || '🙂');
+const medal = i => ['🥇', '🥈', '🥉'][i] || `${i + 1}.`;
+
+function versusFamilyOptions() {
+  const f = family.familyEnabled() && family.getFamily();
+  if (!f || !player || !f.tokens[player.id]) return null;
+  const slot = h('div', { class: 'stack-form' });
+  const online = h('p', { class: 'small muted' });
+  const showOnline = () => {
+    const members = family.getFamily()?.board?.members || [];
+    const names = members.filter(m => m.role !== 'viewer' && m.memberId !== player.id && liveState.online.includes(m.memberId)).map(m => m.name);
+    online.textContent = liveState.connected ? (names.length ? `🟢 Online now: ${names.join(', ')}` : 'Nobody else has the app open right now.') : '📡 Connecting…';
+  };
+  const fill = async (force = false) => {
+    const r = await family.fetchBoard({ force });
+    if (!slot.isConnected) return;
+    const challenges = r?.board?.challenges || [];
+    const todo = challenges.filter(c => !c.entries[player.id] && c.from !== player.id && Date.now() - c.created < 7 * 864e5);
+    const mine = challenges.filter(c => c.entries[player.id]).slice(0, 5);
+    const lobbies = Object.values(liveState.races).filter(x => x.state === 'lobby' && !x.players[player.id]);
+    slot.replaceChildren(...[
+      h('button', { class: 'btn btn-learn vs-option', type: 'button', onclick: createLiveRace },
+        h('span', { class: 'bm-icon' }, '⚡'),
+        h('span', { class: 'bm-text' }, h('b', null, 'Live race'), h('small', null, 'Race family members who have the app open'))),
+      online,
+      ...lobbies.map(x => h('button', { class: 'btn btn-primary wide', type: 'button', onclick: () => joinLiveRace(x.id) }, `🏁 Join ${x.players[x.host]?.name}'s race`)),
+      h('button', { class: 'btn btn-ghost vs-option', type: 'button', onclick: setChallenge },
+        h('span', { class: 'bm-icon' }, '👻'),
+        h('span', { class: 'bm-text' }, h('b', null, 'Challenge the family'), h('small', null, 'Set a time — they race your ghost later'))),
+      todo.length > 0 && card(
+        h('h3', null, '👻 Challenges for you'),
+        h('div', { class: 'stack-form' }, todo.map(c => {
+          const from = c.entries[c.from];
+          return h('button', { class: 'btn btn-primary wide', type: 'button', onclick: () => raceChallenge(c) },
+            `${avatarOf(from?.avatar)} ${from?.name || 'Someone'} · ${fmtRace(from?.ms)} to beat`);
+        }))),
+      mine.length > 0 && card(
+        h('h3', null, '🏆 Recent challenges'),
+        mine.map(c => {
+          const rows = family.standings(c.entries);
+          return h('div', { class: 'ch-row' }, rows.slice(0, 4).map((e, i) =>
+            h('span', { class: e.id === player.id ? 'me' : '' }, `${medal(i)} ${e.name} ${e.ms ? fmtRace(e.ms) : `(${e.correct}/${RACE_TARGET})`}`)));
+        })),
+    ].filter(Boolean));
+    showOnline();
+  };
+  fill(true);
+  const off = onLive(type => {
+    if (!slot.isConnected) return off();
+    if (type === 'presence' || type === 'hello') showOnline();
+    if (type === 'race' || type === 'challenge' || type === 'hello') fill(type === 'challenge');
+  });
+  return slot;
+}
+
+/** Host a live race: create it, then wait in the lobby. */
+function createLiveRace() {
+  if (!liveState.connected) return toast('📡 Not connected to the family yet — try again in a moment');
+  const known = new Set(Object.keys(liveState.races));
+  const timer = setTimeout(() => { off(); toast('⚠️ The family server didn\'t answer'); }, 6000);
+  const off = onLive((type, r) => {
+    if (type !== 'race' || known.has(r.id) || r.host !== player.id) return;
+    off();
+    clearTimeout(timer);
+    raceLobby(r.id);
+  });
+  liveSend({ t: 'create' });
+}
+
+function joinLiveRace(id) {
+  liveSend({ t: 'join', id });
+  raceLobby(id);
+}
+
+function raceLobby(id) {
+  const body = h('div', { class: 'stack-form' });
+  let off = () => {};
+  const leave = () => { liveSend({ t: 'leave', id }); off(); versusMenu(); };
+  const render = () => {
+    if (!body.isConnected) return off();
+    const r = liveState.races[id];
+    if (!r) return;
+    if (r.state === 'cancelled') { off(); toast('The race was cancelled'); return versusMenu(); }
+    if (r.state === 'running') {
+      if (!r.players[player.id]) { off(); toast('That race already started'); return versusMenu(); }
+      off();
+      return runLiveRace(r);
+    }
+    const isHost = r.host === player.id;
+    const racers = Object.entries(r.players);
+    const watching = (family.getFamily()?.board?.members || []).filter(m => m.role !== 'viewer' && liveState.online.includes(m.memberId) && !r.players[m.memberId]);
+    body.replaceChildren(...[
+      card(
+        h('h2', null, isHost ? 'Your race' : `${r.players[r.host]?.name}'s race`),
+        h('div', { class: 'lobby-list' }, racers.map(([mid, p]) => h('div', { class: 'lobby-player' },
+          h('span', { class: 'race-av' }, avatarOf(p.avatar)), h('b', null, p.name), mid === r.host ? ' 👑' : '', mid === player.id ? h('span', { class: 'chip' }, 'You') : null))),
+        h('p', { class: 'small muted' }, isHost
+          ? (racers.length < 2 ? 'Everyone in the family with the app open got an invite. Waiting for someone to join…' : 'Ready when you are!')
+          : `Waiting for ${r.players[r.host]?.name} to start…`),
+        watching.length > 0 && h('p', { class: 'small muted' }, `🟢 Also online: ${watching.map(m => m.name).join(', ')}`)),
+      isHost && h('button', { class: 'btn btn-primary btn-big', type: 'button', disabled: racers.length < 2, onclick: () => liveSend({ t: 'start', id }) },
+        racers.length < 2 ? 'Waiting for a racer…' : `🏁 Start the race (${racers.length} racers)`),
+      h('button', { class: 'btn btn-ghost wide', type: 'button', onclick: leave }, isHost ? 'Cancel race' : 'Leave'),
+    ].filter(Boolean));
+  };
+  page('⚡ Live race', leave, body);
+  off = onLive(type => { if (type === 'race' || type === 'presence' || type === 'hello') render(); });
+  render();
+}
+
+async function runLiveRace(r) {
+  const others = Object.entries(r.players).filter(([mid]) => mid !== player.id).map(([mid, p]) => ({ id: mid, name: p.name, avatar: p.avatar }));
+  const mode = raceMode(player, {
+    seed: r.seed, title: '⚡ Live race', lanes: others, startAt: toLocal(r.startAt),
+    onProgress: (n, wrong) => liveSend({ t: 'progress', id: r.id, n, wrong }),
+  });
+  const off = onLive((type, data) => {
+    if (type === 'progress' && data.id === r.id && data.member !== player.id) mode.setLane(data.member, data.n);
+    if (type === 'race' && data.id === r.id) {
+      for (const [mid, p] of Object.entries(data.players)) if (mid !== player.id) mode.setLane(mid, p.n, p);
+    }
+  });
+  const res = await play(mode);
+  off();
+  liveSend({ t: 'finish', id: r.id, n: res.correct, wrong: res.wrong });
+  family.syncPlayer(player);
+  raceResults(r.id);
+}
+
+function raceResults(id) {
+  const body = h('div', { class: 'stack-form' });
+  let cheered = false;
+  const render = () => {
+    if (!body.isConnected) return off();
+    const r = liveState.races[id];
+    if (!r) return;
+    const rows = family.standings(r.players);
+    const doneAll = r.state === 'done';
+    const place = rows.findIndex(x => x.id === player.id);
+    if (doneAll && !cheered) {
+      cheered = true;
+      if (place === 0 && rows[0].ms != null) { confetti(); sfx.win(); } else sfx.slow();
+    }
+    body.replaceChildren(...[
+      h('div', { class: 'sum-hero' },
+        h('div', { class: 'sum-emoji' }, !doneAll ? '⏳' : place === 0 && rows[0].ms != null ? '🏆' : '🏁'),
+        h('h2', null, !doneAll ? 'Waiting for everyone to finish…' : rows[0].ms == null ? 'Nobody finished!' : rows[0].id === player.id ? 'You won!' : `${rows[0].name} won!`)),
+      card(h('ol', { class: 'standings' }, rows.map((x, i) => h('li', { class: x.id === player.id ? 'me' : '' },
+        h('span', null, medal(i)), h('span', { class: 'race-av' }, avatarOf(x.avatar)), h('b', null, x.name),
+        h('span', { class: 'muted' }, x.done ? (x.ms != null ? fmtRace(x.ms) : `${x.n}/${RACE_TARGET} · didn't finish`) : `${x.n}/${RACE_TARGET}…`))))),
+      doneAll && h('div', { class: 'btn-row' },
+        h('button', { class: 'btn btn-primary', type: 'button', onclick: () => { off(); createLiveRace(); } }, '⚡ Race again'),
+        h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => { off(); versusMenu(); } }, 'Done')),
+    ].filter(Boolean));
+  };
+  page('⚡ Race results', null, body);
+  const off = onLive(type => { if (type === 'race' || type === 'progress' || type === 'hello') render(); });
+  render();
+}
+
+/** Play a race; the time becomes a challenge others race as a ghost. */
+async function setChallenge() {
+  const seed = newSeed();
+  const res = await play(raceMode(player, { seed, title: '👻 Set a challenge' }));
+  family.syncPlayer(player);
+  if (res.quit || res.ms == null) {
+    return page('👻 Challenge', versusMenu,
+      h('div', { class: 'sum-hero' }, h('div', { class: 'sum-emoji' }, '🏁'), h('h2', null, 'No time set'), h('p', { class: 'muted' }, `Get to ${RACE_TARGET} correct to set a challenge.`)),
+      h('button', { class: 'btn btn-primary btn-big', type: 'button', onclick: setChallenge }, 'Try again'));
+  }
+  let sent = true;
+  try {
+    await family.createChallenge(player, seed, { ms: res.ms, correct: res.correct, wrong: res.wrong, timeline: res.timeline });
+  } catch {
+    sent = false;
+  }
+  page('👻 Challenge set!', null,
+    h('div', { class: 'sum-hero' },
+      h('div', { class: 'sum-emoji' }, sent ? '👻' : '📡'),
+      h('div', { class: 'hero-num' }, fmtRace(res.ms)),
+      h('div', { class: 'hero-label' }, `to ${RACE_TARGET} correct`),
+      h('p', { class: 'muted' }, sent ? 'Everyone in your family can now race your ghost on the same questions.' : 'Couldn\'t send it to the family — check the internet connection.')),
+    h('div', { class: 'btn-row' },
+      h('button', { class: 'btn btn-primary', type: 'button', onclick: versusMenu }, 'Done'),
+      h('button', { class: 'btn btn-ghost', type: 'button', onclick: setChallenge }, 'Set another')));
+  if (sent) { sfx.win(); confetti(70); }
+}
+
+/** Race everyone who already raced this challenge, as ghosts. */
+async function raceChallenge(c) {
+  const from = c.entries[c.from];
+  const lanes = family.standings(c.entries).map(e => ({ id: e.id, name: e.name, avatar: e.avatar, ghost: e.timeline }));
+  const res = await play(raceMode(player, { seed: c.seed, title: `👻 ${from?.name || 'Ghost'}'s challenge`, lanes }));
+  family.syncPlayer(player);
+  if (res.quit) return versusMenu();
+  try {
+    await family.answerChallenge(player, c.id, { ms: res.ms, correct: res.correct, wrong: res.wrong, timeline: res.timeline });
+  } catch { /* shown below with the local result */ }
+  const rows = family.standings({ ...c.entries, [player.id]: { name: player.name, avatar: player.avatar, ms: res.ms, correct: res.correct } });
+  const place = rows.findIndex(x => x.id === player.id);
+  page('👻 Challenge results', null,
+    h('div', { class: 'sum-hero' },
+      h('div', { class: 'sum-emoji' }, place === 0 && res.ms != null ? '🏆' : '👻'),
+      h('h2', null, place === 0 && res.ms != null ? 'You beat everyone!' : res.ms != null ? `${medal(place)} place` : 'Didn\'t finish this time')),
+    card(h('ol', { class: 'standings' }, rows.map((x, i) => h('li', { class: x.id === player.id ? 'me' : '' },
+      h('span', null, medal(i)), h('span', { class: 'race-av' }, avatarOf(x.avatar)), h('b', null, x.name),
+      h('span', { class: 'muted' }, x.ms != null ? fmtRace(x.ms) : `${x.correct}/${RACE_TARGET}`))))),
+    h('div', { class: 'btn-row' },
+      h('button', { class: 'btn btn-primary', type: 'button', onclick: versusMenu }, 'Done'),
+      h('button', { class: 'btn btn-ghost', type: 'button', onclick: setChallenge }, '👻 Set your own')));
+  if (place === 0 && res.ms != null) { sfx.win(); confetti(); }
+}
+
+function duelSetup() {
+  const locals = store.listPlayers();
+  const options = [...locals.map(x => ({ id: x.id, name: x.name, avatar: AVATARS[x.avatar] || '🙂' })), { id: 'guest', name: 'Guest', avatar: '🙂' }];
+  const select = (value, label) => h('select', { class: 'input', 'aria-label': label },
+    options.map(o => h('option', { value: o.id, selected: o.id === value }, `${o.avatar} ${o.name}`)));
+  const other = locals.find(x => x.id !== player.id);
+  const s1 = select(player.id, 'Player at the bottom');
+  const s2 = select(other ? other.id : 'guest', 'Player at the top');
+  const guestName = h('input', { class: 'input', placeholder: 'Guest\'s name', maxlength: 16, autocapitalize: 'words', 'aria-label': 'Guest name' });
+  const syncGuest = () => { guestName.hidden = s1.value !== 'guest' && s2.value !== 'guest'; };
+  s1.addEventListener('change', syncGuest);
+  s2.addEventListener('change', syncGuest);
+  syncGuest();
+  const msg = h('p', { class: 'small', 'aria-live': 'polite' });
+  page('📱 Duel', versusMenu,
+    card(
+      h('p', { class: 'small' }, 'Lay the phone (or iPad) flat between you. Each player gets their own half of the screen and their own keypad.'),
+      h('div', { class: 'vs-pick' },
+        h('div', null, h('label', { class: 'field-label' }, '⬆️ Top'), s2),
+        h('span', { class: 'vs-sep' }, 'VS'),
+        h('div', null, h('label', { class: 'field-label' }, '⬇️ Bottom'), s1)),
+      guestName),
+    h('button', {
+      class: 'btn btn-primary btn-big', type: 'button',
+      onclick: () => {
+        if (s1.value === s2.value && s1.value !== 'guest') { msg.textContent = 'Pick two different players.'; return; }
+        const pick = id => {
+          if (id === 'guest') return { id: null, name: clip(guestName.value, 16) || 'Guest', avatar: '🙂' };
+          const p = store.loadPlayer(id);
+          return { id, name: p.name, avatar: AVATARS[p.avatar] || '🙂', player: p };
+        };
+        startDuel([pick(s1.value), pick(s2.value)]);
+      },
+    }, '⚔️ Start duel'),
+    msg);
+}
+
+async function startDuel(sides) {
+  const res = await runDuel({
+    players: sides,
+    onAnswer: (i, q, r) => { if (sides[i].player) store.recordAnswer(sides[i].player, q, r); },
+  });
+  for (const [i, s] of sides.entries()) {
+    if (!s.player) continue;
+    const v = (s.player.versus ||= { duels: 0, duelWins: 0 });
+    if (!res.quit) {
+      v.duels++;
+      if (res.winner === i) v.duelWins++;
+    }
+    store.savePlayer(s.player);
+    if (s.player.id === player.id) player = s.player;
+    family.syncPlayer(s.player);
+  }
+  if (res.rematch) return startDuel(sides);
+  if (res.quit) return versusMenu();
+  const w = sides[res.winner];
+  page('⚔️ Duel over', null,
+    h('div', { class: 'sum-hero' },
+      h('div', { class: 'sum-emoji' }, '🏆'),
+      h('h2', null, `${w.avatar} ${w.name} wins!`),
+      h('p', { class: 'muted' }, `${fmtRace(res.stats[res.winner].ms)} to ${RACE_TARGET} correct`)),
+    h('div', { class: 'tiles' },
+      ...sides.map((s, i) => h('div', { class: 'tile' }, h('div', { class: 'tile-value' }, `${s.avatar} ${res.stats[i].correct}`), h('div', { class: 'tile-label' }, `${s.name} · ✗ ${res.stats[i].wrong}`)))),
+    h('div', { class: 'btn-row' },
+      h('button', { class: 'btn btn-primary', type: 'button', onclick: () => startDuel(sides) }, '🔁 Rematch'),
+      h('button', { class: 'btn btn-ghost', type: 'button', onclick: home }, 'Home')));
 }

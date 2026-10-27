@@ -9,7 +9,7 @@
 
 import { h } from './util.js';
 import { FAST_MS } from './facts.js';
-import { sfx, haptic } from './sfx.js';
+import { sfx, haptic, music, toggleMusic, musicOn } from './sfx.js';
 import { floatText, shake, dialog } from './fx.js';
 
 /** Run one round. mode: see modes.js. Resolves with mode.finish()'s result. */
@@ -57,13 +57,18 @@ class Round {
       if (this.away) return this.cameBack(); // a tap means they're back (in case no focus event fired)
       b.classList.add('down');
       setTimeout(() => b.classList.remove('down'), 110);
+      sfx.key();
       this.key(b.dataset.k);
     });
 
     this.el = h('div', { class: `screen game mode-${this.m.id}` },
       h('header', { class: 'g-top' },
         h('button', { class: 'g-quit', type: 'button', 'aria-label': 'Quit', onclick: () => this.askQuit() }, '✕'),
-        (this.hud = h('div', { class: 'g-hud' }))),
+        (this.hud = h('div', { class: 'g-hud' })),
+        this.m.music && h('button', {
+          class: 'g-mute', type: 'button', 'aria-label': 'Music on or off',
+          onclick: e => { e.currentTarget.textContent = toggleMusic() ? '🎵' : '🔇'; },
+        }, musicOn() ? '🎵' : '🔇')),
       (this.stage = h('div', { class: 'g-stage' })),
       (this.card = h('div', { class: 'g-card' },
         (this.qEl = h('div', { class: 'g-q', 'aria-live': 'polite' })),
@@ -123,6 +128,7 @@ class Round {
 
   countdown() {
     if (!this.m.countdown) return this.begin();
+    if (this.m.startAt) return this.countdownTo(this.m.startAt);
     const steps = ['3', '2', '1', 'Go!'];
     let i = 0;
     const step = () => {
@@ -139,10 +145,35 @@ class Round {
     this.later(step, this.m.introText ? 1600 : 500);
   }
 
+  /** Live races: everyone starts at the same moment. */
+  countdownTo(at) {
+    let shown = null;
+    const step = () => {
+      const left = at - Date.now();
+      if (left <= 0) {
+        sfx.go();
+        return this.begin();
+      }
+      const sec = Math.ceil(left / 1000);
+      if (sec !== shown) {
+        shown = sec;
+        if (sec <= 3) {
+          this.showOverlay({ title: String(sec), big: true });
+          sfx.tick();
+        } else {
+          this.showOverlay({ icon: this.m.introIcon, title: this.m.introTitle || 'Get ready…', text: this.m.introText });
+        }
+      }
+      this.later(step, Math.min(100, left));
+    };
+    step();
+  }
+
   begin() {
     if (this.started || this.done) return;
     this.started = true;
     this.hideOverlay();
+    if (this.m.music) music.play(this.m.music);
     this.m.start?.(this);
     this.next();
   }
@@ -330,7 +361,7 @@ class Round {
     this.hideOverlay();
     this.el.classList.remove('paused');
     const to = this.resumeTo;
-    if (to === 'intro') return this.begin();
+    if (to === 'intro') return this.m.startAt && Date.now() < this.m.startAt ? this.countdownTo(this.m.startAt) : this.begin();
     if (to === 'fix') {
       this.phase = 'fix';
       this.input = '';
@@ -391,6 +422,7 @@ class Round {
     this.clearTimers();
     this.unwatch();
     this.dlg?.close();
+    music.stop();
     Promise.resolve(this.m.finish(this, extra)).then(this.resolve);
   }
 }

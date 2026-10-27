@@ -37,6 +37,7 @@ export function trainMode(player, { table = null } = {}) {
   let hud;
   return {
     id: 'train',
+    music: 'calm',
     limit: 10000,
     countdown: false,
     init(r) { hud = progressHud(r, table ? `🧠 ${table}s` : '🧠 Training'); },
@@ -91,6 +92,7 @@ export function blitzMode(player) {
   let timeEl, scoreEl, comboEl;
   return {
     id: 'blitz',
+    music: 'race',
     limit: null,
     countdown: true,
     introIcon: '⚡',
@@ -168,10 +170,11 @@ export function bossMode(player, t) {
     hearts--;
     drawHearts();
     animate('attack');
-    sfx.hit();
+    sfx.hurt();
   };
   return {
     id: 'boss',
+    music: 'battle',
     limit: 6000,
     countdown: true,
     introIcon: boss.emoji,
@@ -202,10 +205,12 @@ export function bossMode(player, t) {
         hp = Math.max(0, hp - dmg);
         hpFill.style.width = `${hp}%`;
         animate('hit');
+        sfx.hit();
         floatText(r.stage, `−${dmg}`, res.fast ? 'gold' : '');
         if (hp <= 0) {
           outcome = 'won';
           mon.classList.add('ko');
+          sfx.boom();
           return { text: '💥 K.O.!', end: true, delay: 1100 };
         }
         return { text: res.fast ? '⚡ Critical hit!' : '👊 Hit! Faster = more damage', delay: 420 };

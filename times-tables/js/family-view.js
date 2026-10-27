@@ -24,7 +24,7 @@ function weekStrip(m) {
     }, h('i'), h('small', null, d.weekday))));
 }
 
-function memberCard(m, meIds) {
+function memberCard(m, meIds, online = []) {
   const s = m.summary;
   const streak = streakOf(m);
   const check = s.lastCheck;
@@ -34,7 +34,7 @@ function memberCard(m, meIds) {
       h('div', { class: 'fam-name' },
         h('b', null, m.name),
         meIds.includes(m.memberId) && h('span', { class: 'chip' }, 'You'),
-        h('small', { class: 'muted' }, s.lastActive ? `Active ${fmtAgo(s.lastActive)}` : 'Not active yet')),
+        h('small', { class: 'muted' }, online.includes(m.memberId) ? '🟢 In the app now' : s.lastActive ? `Active ${fmtAgo(s.lastActive)}` : 'Not active yet')),
       h('div', { class: `streak ${streak ? 'on' : ''}`, title: 'Daily-goal streak' }, '🔥', h('b', null, String(streak)))),
     statusChip(m),
     weekStrip(m),
@@ -50,7 +50,7 @@ function memberCard(m, meIds) {
 /**
  * The full board. me: member ids on this device.
  */
-export function familyBoard({ board, fetchedAt, offline }, me = []) {
+export function familyBoard({ board, fetchedAt, offline }, me = [], online = []) {
   const players = playersOf(board);
   const waiting = board.members.filter(m => m.role !== 'viewer' && !m.summary);
   const grownUps = board.members.filter(m => m.role === 'viewer');
@@ -70,7 +70,7 @@ export function familyBoard({ board, fetchedAt, offline }, me = []) {
       h('span', { class: 'legend-item', role: 'listitem' }, h('i', { class: 'swatch st-none' }), 'No practice')),
     offline && h('p', { class: 'warn-box small' }, `📡 Offline — showing the last update${fetchedAt ? ` (${fmtAgo(fetchedAt)})` : ''}.`),
     players.length === 0 && h('p', { class: 'muted center' }, 'Nobody has practiced yet. Progress shows up here after the first round.'),
-    players.map(m => memberCard(m, me)),
+    players.map(m => memberCard(m, me, online)),
     waiting.length > 0 && h('p', { class: 'muted small center' }, `Joined, no practice yet: ${waiting.map(m => m.name).join(', ')}`),
     grownUps.length > 0 && h('p', { class: 'muted small center' }, `👀 Watching: ${grownUps.map(m => m.name).join(', ')}`));
 }

@@ -115,6 +115,27 @@ export async function rejoinPlayer(p) {
   return syncPlayer(p, { force: true });
 }
 
+// ---------- challenges (race someone's ghost) ----------
+
+export async function createChallenge(p, seed, entry) {
+  const f = getFamily();
+  return api(`/families/${f.id}/challenges`, { method: 'POST', token: f.tokens[p.id], body: { memberId: p.id, seed, entry } });
+}
+
+export async function answerChallenge(p, challengeId, entry) {
+  const f = getFamily();
+  await api(`/families/${f.id}/challenges/${challengeId}/entries`, { method: 'POST', token: f.tokens[p.id], body: { memberId: p.id, entry } });
+  f.fetched = 0;
+  saveFamily(f);
+}
+
+/** Finished first, fastest first; then everyone else by how far they got. */
+export function standings(entries) {
+  return Object.entries(entries)
+    .map(([id, e]) => ({ id, ...e }))
+    .sort((a, b) => (a.ms == null) - (b.ms == null) || (a.ms ?? 0) - (b.ms ?? 0) || (b.correct ?? b.n ?? 0) - (a.correct ?? a.n ?? 0));
+}
+
 // ---------- what each player shares ----------
 
 export function summarize(p) {

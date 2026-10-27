@@ -101,7 +101,7 @@ export function runFlashcards({ title, cards, player }) {
       if (flipped || busy) return;
       flipped = true;
       cardEl.classList.add('flipped');
-      sfx.tick();
+      sfx.flip();
       actions.replaceChildren(
         btn('btn-ghost fc-again', '↻ Again', () => rate(false)),
         btn('btn-primary fc-got', '✓ Got it', () => rate(true)));
@@ -120,6 +120,7 @@ export function runFlashcards({ title, cards, player }) {
         queue.splice(Math.min(queue.length, 3), 0, card);
       }
       cardEl.classList.add(gotIt ? 'fly-right' : 'fly-left');
+      sfx.whoosh();
       setTimeout(() => { busy = false; show(); }, 260);
     }
 
