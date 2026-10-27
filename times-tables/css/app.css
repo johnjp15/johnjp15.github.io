@@ -595,6 +595,9 @@ p { margin: 0.4em 0; }
 .race-lane b { text-align: right; font-variant-numeric: tabular-nums; }
 .mode-race .g-q { font-size: clamp(44px, min(14vw, 8.5vh), 84px); }
 
+.room-code-label { text-align: center; font-weight: 800; color: var(--ink-3); }
+.room-code { text-align: center; font-size: 4rem; font-weight: 900; letter-spacing: 0.25em; padding-left: 0.25em; color: var(--gold); font-variant-numeric: tabular-nums; }
+.code-input { letter-spacing: 0.4em; font-size: 2rem; font-variant-numeric: tabular-nums; }
 .lobby-list { display: flex; flex-direction: column; gap: 8px; margin: 6px 0; }
 .lobby-player { display: flex; align-items: center; gap: 8px; font-size: 1.05rem; }
 .standings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }

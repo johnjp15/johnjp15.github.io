@@ -18,6 +18,7 @@ import { runDuel } from './duel.js';
 import { RACE_TARGET, fmtRace, newSeed } from './race.js';
 import { raceMode } from './race-mode.js';
 import { connectLive, onLive, liveSend, liveState, toLocal } from './live.js';
+import { hostRoom, joinRoom } from './room.js';
 
 const { AVATARS, DAILY_GOAL } = store;
 let player = null;
@@ -1075,6 +1076,9 @@ function versusMenu() {
     h('button', { class: 'btn btn-primary vs-option', type: 'button', onclick: duelSetup },
       h('span', { class: 'bm-icon' }, '📱'),
       h('span', { class: 'bm-text' }, h('b', null, 'Duel on this phone'), h('small', null, 'Two players, one screen, face to face'))),
+    h('button', { class: 'btn btn-learn vs-option', type: 'button', onclick: roomMenu },
+      h('span', { class: 'bm-icon' }, '📡'),
+      h('span', { class: 'bm-text' }, h('b', null, 'Race a friend\'s phone'), h('small', null, 'Live, phone to phone, with a 4-digit code'))),
     versusFamilyOptions(),
     !inFamily && family.familyEnabled() && card(h('p', { class: 'small' }, '👪 Join your family (ask a grown-up) to challenge each other on your own phones — even when you\'re not together.')));
 }
@@ -1387,4 +1391,129 @@ async function startDuel(sides) {
     h('div', { class: 'btn-row' },
       h('button', { class: 'btn btn-primary', type: 'button', onclick: () => startDuel(sides) }, '🔁 Rematch'),
       h('button', { class: 'btn btn-ghost', type: 'button', onclick: home }, 'Home')));
+}
+
+// ---------- room-code races (phone to phone) ----------
+
+function roomMenu() {
+  const me = { name: player.name, avatar: player.avatar };
+  const codeInput = h('input', {
+    class: 'input big code-input', inputmode: 'numeric', pattern: '[0-9]*', maxlength: 4, placeholder: '0000',
+    autocomplete: 'off', 'aria-label': 'Race code',
+  });
+  const msg = h('p', { class: 'small', 'aria-live': 'polite' });
+  const busy = async (btn, label, fn) => {
+    btn.disabled = true;
+    msg.textContent = label;
+    try {
+      await fn();
+    } catch (e) {
+      msg.textContent = `⚠️ ${e.message}`;
+      btn.disabled = false;
+    }
+  };
+  const hostBtn = h('button', {
+    class: 'btn btn-primary btn-big', type: 'button',
+    onclick: () => busy(hostBtn, 'Getting a code…', async () => roomLobby(await hostRoom(me))),
+  }, '📡 Host a race');
+  const joinBtn = h('button', { class: 'btn btn-learn wide', type: 'submit' }, 'Join race');
+  page('📡 Race a friend', versusMenu,
+    h('p', { class: 'muted center' }, `Race on 2–4 phones at once, live. Everyone gets the same questions — first to ${RACE_TARGET} correct wins.`),
+    hostBtn,
+    h('form', {
+      class: 'card stack-form',
+      onsubmit: e => {
+        e.preventDefault();
+        const code = codeInput.value.replace(/\D/g, '');
+        if (code.length !== 4) { msg.textContent = 'Type the 4-digit code from the other phone.'; return; }
+        busy(joinBtn, 'Connecting…', async () => roomLobby(await joinRoom(code, me)));
+      },
+    }, h('h3', null, 'Got a code?'), codeInput, joinBtn),
+    msg,
+    h('p', { class: 'small muted center' }, 'Works best with both phones on the same Wi-Fi.'));
+}
+
+function roomLobby(room) {
+  const myId = room.isHost ? 'host' : room.myId;
+  const body = h('div', { class: 'stack-form' });
+  let off = () => {};
+  const leave = () => { off(); room.close(); versusMenu(); };
+  const render = () => {
+    const racers = room.players();
+    body.replaceChildren(...[
+      room.isHost && card(
+        h('div', { class: 'room-code-label' }, 'Race code'),
+        h('div', { class: 'room-code', 'aria-label': `Race code ${room.code.split('').join(' ')}` }, room.code),
+        h('p', { class: 'small muted center' }, 'On the other phone: ⚔️ Versus → 📡 Race a friend\'s phone → type this code.')),
+      card(
+        h('h3', null, room.isHost ? 'Racers' : `Joined race ${room.code}`),
+        h('div', { class: 'lobby-list' }, racers.map(p => h('div', { class: 'lobby-player' },
+          h('span', { class: 'race-av' }, avatarOf(p.avatar)), h('b', null, p.name), p.id === 'host' ? ' 👑' : '',
+          p.id === myId ? h('span', { class: 'chip' }, 'You') : null))),
+        !room.isHost && h('p', { class: 'small muted' }, 'Waiting for the host to start…')),
+      room.isHost && h('button', { class: 'btn btn-primary btn-big', type: 'button', disabled: racers.length < 2, onclick: () => room.start() },
+        racers.length < 2 ? 'Waiting for someone to join…' : `🏁 Start the race (${racers.length} racers)`),
+      h('button', { class: 'btn btn-ghost wide', type: 'button', onclick: leave }, room.isHost ? 'Close the race' : 'Leave'),
+    ].filter(Boolean));
+  };
+  page('📡 Race a friend', leave, body);
+  off = room.on((type, data) => {
+    if (type === 'lobby') render();
+    if (type === 'start') { off(); runRoomRace(room, data); }
+    if (type === 'closed') { off(); room.close(); toast(`📡 ${data}`); versusMenu(); }
+  });
+  render();
+}
+
+async function runRoomRace(room, start) {
+  const myId = room.isHost ? 'host' : room.myId;
+  const lanes = start.players.filter(p => p.id !== myId).map(p => ({ id: p.id, name: p.name, avatar: p.avatar }));
+  const mode = raceMode(player, {
+    seed: start.seed, title: '📡 Live race', lanes, startAt: start.startAt,
+    onProgress: (n, wrong) => room.progress(n, wrong),
+  });
+  let result = null;
+  const off = room.on((type, data) => {
+    if (type === 'progress' && data.id !== myId) mode.setLane(data.id, data.n);
+    if (type === 'result') result = data;
+  });
+  const res = await play(mode);
+  room.finish({ correct: res.correct, wrong: res.wrong, ms: res.ms });
+  off();
+  family.syncPlayer(player);
+  roomResults(room, myId, result || room.lastResult());
+}
+
+function roomResults(room, myId, initial) {
+  let players = initial;
+  let cheered = false;
+  const body = h('div', { class: 'stack-form' });
+  const leave = () => { off(); room.close(); versusMenu(); };
+  const render = () => {
+    const rows = players ? family.standings(Object.fromEntries(players.map(p => [p.id, p]))) : null;
+    const won = rows && rows[0].id === myId && rows[0].ms != null;
+    if (rows && !cheered) {
+      cheered = true;
+      if (won) { confetti(); sfx.win(); } else sfx.slow();
+    }
+    body.replaceChildren(...[
+      h('div', { class: 'sum-hero' },
+        h('div', { class: 'sum-emoji' }, !rows ? '⏳' : won ? '🏆' : '🏁'),
+        h('h2', null, !rows ? 'Waiting for everyone to finish…' : rows[0].ms == null ? 'Nobody finished!' : won ? 'You won!' : `${rows[0].name} won!`)),
+      rows && card(h('ol', { class: 'standings' }, rows.map((x, i) => h('li', { class: x.id === myId ? 'me' : '' },
+        h('span', null, medal(i)), h('span', { class: 'race-av' }, avatarOf(x.avatar)), h('b', null, x.name),
+        h('span', { class: 'muted' }, x.ms != null ? fmtRace(x.ms) : `${x.n}/${RACE_TARGET}${x.gone ? ' · left' : ''}`))))),
+      rows && room.isHost && h('button', { class: 'btn btn-primary btn-big', type: 'button', disabled: room.players().length < 2, onclick: () => room.start() }, '🔁 Race again'),
+      rows && !room.isHost && h('p', { class: 'muted center small' }, 'If the host starts another race, you\'ll join it automatically.'),
+      h('button', { class: 'btn btn-ghost wide', type: 'button', onclick: leave }, 'Leave'),
+    ].filter(Boolean));
+  };
+  page('📡 Race results', null, body);
+  const off = room.on((type, data) => {
+    if (type === 'result') { players = data; render(); }
+    if (type === 'lobby') render();
+    if (type === 'start') { off(); runRoomRace(room, data); }
+    if (type === 'closed') { toast(`📡 ${data}`); if (!players) leave(); }
+  });
+  render();
 }
