@@ -111,7 +111,10 @@ export function savePlayer(p) {
   return ok;
 }
 
-export function createPlayer({ id = newPlayerId(), name, avatar }) {
+// Reuse the cookie's id when the rest of the player's data was wiped, so their player ID stays the same.
+const freeCookieId = () => { const c = readCookie(); return c && !listPlayers().some(p => p.id === c) ? c : null; };
+
+export function createPlayer({ id = freeCookieId() || newPlayerId(), name, avatar }) {
   const p = { ...defaults(id), name: clip(name, 20) || 'Player', avatar };
   savePlayer(p);
   setCurrent(p.id);

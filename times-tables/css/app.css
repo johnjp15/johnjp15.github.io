@@ -351,6 +351,7 @@ p { margin: 0.4em 0; }
 }
 .g-hud { flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0; font-weight: 900; }
 .hud-title { white-space: nowrap; }
+.nowrap { white-space: nowrap; }
 .g-hud .hud-progress { flex: 1; margin-top: 0; }
 .hud-progress i { background: linear-gradient(90deg, var(--cyan), var(--violet)); }
 .hud-combo { min-width: 3.2em; text-align: right; color: var(--gold); }

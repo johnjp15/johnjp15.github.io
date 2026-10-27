@@ -6,7 +6,7 @@ import { TOTAL, MAX, keyOf } from './facts.js';
 import { REASON, REASON_TEXT, DEVICES, summarize } from './codec.js';
 import { AVATARS } from './store.js';
 import { factGrid, stackedBars, lineChart, tipValue } from './charts.js';
-import { fpText, confirmSeal } from './certs.js';
+import { fpText, confirmSeal, hasKnownSeal } from './certs.js';
 
 const STATUS = {
   fast: { cls: 'st-fast', icon: '⚡', name: 'Instant (under 3s)' },
@@ -218,7 +218,9 @@ function verifyBanner(link, test, opts) {
         h('p', null, 'This result claims a parent seal, but the seal signature is wrong. Treat it as not verified.')));
   }
   const unchecked = link.seal.state === 'unknown';
-  const warn = test.leaves > 0 || test.reason !== REASON.DONE || unchecked;
+  // A grown-up who has confirmed sealed results here expects a seal; a missing one may have been removed.
+  const unsealed = link.seal.state === 'none' && hasKnownSeal();
+  const warn = test.leaves > 0 || test.reason !== REASON.DONE || unchecked || unsealed;
   const children = [
     h('div', { class: 'banner-icon' }, link.seal.state === 'ok' ? '🔒' : warn ? '⚠️' : '✅'),
     h('div', null,
@@ -229,6 +231,7 @@ function verifyBanner(link, test, opts) {
         ? `Signed by the app and not edited — but ${[
           test.leaves ? `the app was left ${plural(test.leaves, 'time')}` : '',
           test.reason !== REASON.DONE ? 'the test was not finished' : '',
+          unsealed ? 'it isn\'t parent-sealed, though this device has confirmed sealed results before' : '',
         ].filter(Boolean).join(' and ')}. See details below.`
         : 'Signed by the app when the test finished. Nothing has been changed since.')),
   ];
@@ -263,7 +266,7 @@ function sealForm(link, opts) {
       }
     },
   },
-  h('strong', null, `🔒 Parent-sealed result (seal ${fpText(link.seal.fp)})`),
+  h('strong', null, '🔒 Parent-sealed result ', h('span', { class: 'nowrap' }, `(seal ${fpText(link.seal.fp)})`)),
   h('p', { class: 'small muted' }, 'Grown-ups: enter the passphrase you set in the Parent corner to confirm this result came from your kid\'s device.'),
   input,
   h('label', { class: 'check small', for: 'remember-seal' }, remember, ' Remember on this device'),

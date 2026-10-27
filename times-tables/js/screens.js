@@ -55,7 +55,8 @@ export async function boot() {
   }
 
   let invite = null;
-  if (location.hash.startsWith('#family=')) {
+  const invited = location.hash.startsWith('#family=');
+  if (invited) {
     invite = family.parseInvite(location.hash.slice('#family='.length));
     history.replaceState(null, '', location.pathname + location.search);
   }
@@ -79,7 +80,7 @@ export async function boot() {
   if (player) applySound(player.settings);
   listenForInvites();
   ensureLive();
-  if (invite) return inviteFlow(invite);
+  if (invited) return inviteFlow(invite);
   if (!player) return family.getFamily()?.viewer ? familyScreen() : onboarding();
   home();
   if (interrupted) {
@@ -843,7 +844,11 @@ async function askText({ icon, title, body, value = '', placeholder = '', ok = '
   return res ? clip(input.value, max) : null;
 }
 
-const familyError = e => (e?.status === 403 || e?.status === 404
+const familyError = e => (e?.status === 403 && /removed/.test(e.message)
+  ? 'A grown-up removed you from this family. Ask them to add you back (Members → Add back).'
+  : e?.status === 409
+  ? 'You\'re already in this family on another device. A grown-up can remove that one in Members, add you back, then you can join here.'
+  : e?.status === 403 || e?.status === 404
   ? 'This invite link doesn\'t work anymore. Ask for a new one.'
   : 'Couldn\'t reach the family server. Check the internet connection and try again.');
 
@@ -882,6 +887,12 @@ async function inviteFlow(invite) {
   }
   const current = family.getFamily();
   const players = store.listPlayers().map(x => store.loadPlayer(x.id)).filter(Boolean);
+  const removed = players.filter(p => board.removed?.some(x => x.memberId === p.id));
+  if (removed.length) {
+    if (current?.id === invite.id) family.noteRemoved(removed.map(p => p.id));
+    await dialog({ icon: '👪', title: 'Can\'t join', body: `A grown-up removed ${removed.length === players.length ? 'you' : removed.map(p => p.name).join(' & ')} from ${board.name}. Ask them to add you back (Members → Add back).` });
+    return proceed();
+  }
   if (current?.id === invite.id && players.every(p => current.tokens[p.id])) {
     toast(`👪 Already in ${board.name}`);
     return proceed();
@@ -1056,7 +1067,13 @@ async function manageFamily(back) {
   const r = await family.fetchBoard({ force: true });
   const members = r?.board?.members || [];
   const localPlayers = store.listPlayers();
-  const removedHere = localPlayers.filter(x => f.removed?.[x.id]);
+  const removed = [...(r?.board?.removed || [])];
+  for (const x of localPlayers) if (f.removed?.[x.id] && !removed.some(m => m.memberId === x.id)) removed.push({ memberId: x.id, name: x.name, avatar: x.avatar });
+  const addBack = async m => {
+    const here = localPlayers.find(x => x.id === m.memberId);
+    await (here ? family.rejoinPlayer(store.loadPlayer(here.id)) : family.restoreMember(m.memberId)).catch(e => toast(`⚠️ ${familyError(e)}`));
+    manageFamily(back);
+  };
   page('👥 Members', back,
     card(
       members.length ? members.map(m => h('div', { class: 'player-row' },
@@ -1070,11 +1087,12 @@ async function manageFamily(back) {
             manageFamily(back);
           },
         }, 'Remove'))) : h('p', { class: 'muted' }, r ? 'No members yet.' : 'Couldn\'t reach the family server.')),
-    removedHere.length > 0 && card(
-      h('h3', null, 'Removed players on this device'),
-      removedHere.map(x => h('div', { class: 'player-row' },
-        h('span', null, `${AVATARS[x.avatar] || '🙂'} ${x.name}`),
-        h('button', { class: 'btn btn-small', type: 'button', onclick: async () => { await family.rejoinPlayer(store.loadPlayer(x.id)).catch(() => {}); manageFamily(back); } }, 'Add back')))),
+    removed.length > 0 && card(
+      h('h3', null, 'Removed'),
+      removed.map(m => h('div', { class: 'player-row' },
+        h('span', null, `${m.role === 'viewer' ? '🧑' : AVATARS[m.avatar] || '🙂'} ${m.name}`),
+        h('button', { class: 'btn btn-small', type: 'button', onclick: () => addBack(m) }, 'Add back'))),
+      h('p', { class: 'small muted' }, 'Added-back players rejoin the next time their app syncs.')),
     h('button', {
       class: 'btn btn-ghost wide', type: 'button',
       onclick: async () => {
@@ -1285,6 +1303,7 @@ function raceResults(id) {
       doneAll && h('div', { class: 'btn-row' },
         h('button', { class: 'btn btn-primary', type: 'button', onclick: () => { off(); createLiveRace(); } }, '⚡ Race again'),
         h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => { off(); versusMenu(); } }, 'Done')),
+      !doneAll && h('button', { class: 'btn btn-ghost wide', type: 'button', onclick: () => { off(); versusMenu(); } }, 'Back to Versus'),
     ].filter(Boolean));
   };
   page('⚡ Race results', null, body);
@@ -1323,13 +1342,16 @@ async function setChallenge() {
 /** Race everyone who already raced this challenge, as ghosts. */
 async function raceChallenge(c) {
   const from = c.entries[c.from];
-  const lanes = family.standings(c.entries).map(e => ({ id: e.id, name: e.name, avatar: e.avatar, ghost: e.timeline }));
+  const lanes = family.standings(c.entries).filter(e => !e.pending).map(e => ({ id: e.id, name: e.name, avatar: e.avatar, ghost: e.timeline }));
+  // One try each: the try is used up as soon as the race starts.
+  const started = family.answerChallenge(player, c.id, { pending: true, correct: 0, wrong: 0, timeline: [] }).catch(() => {});
   const res = await play(raceMode(player, { seed: c.seed, title: `👻 ${from?.name || 'Ghost'}'s challenge`, lanes }));
   family.syncPlayer(player);
-  if (res.quit) return versusMenu();
+  await started;
   try {
     await family.answerChallenge(player, c.id, { ms: res.ms, correct: res.correct, wrong: res.wrong, timeline: res.timeline });
   } catch { /* shown below with the local result */ }
+  if (res.quit) return versusMenu();
   const rows = family.standings({ ...c.entries, [player.id]: { name: player.name, avatar: player.avatar, ms: res.ms, correct: res.correct } });
   const place = rows.findIndex(x => x.id === player.id);
   page('👻 Challenge results', null,
@@ -1493,15 +1515,23 @@ async function runRoomRace(room, start) {
     onProgress: (n, wrong) => room.progress(n, wrong),
   });
   let result = null;
+  let closed = null;
   const off = room.on((type, data) => {
     if (type === 'progress' && data.id !== myId) mode.setLane(data.id, data.n);
     if (type === 'result') result = data;
+    if (type === 'closed') closed = data;
   });
   const res = await play(mode);
   room.finish({ correct: res.correct, wrong: res.wrong, ms: res.ms });
   off();
   family.syncPlayer(player);
-  roomResults(room, myId, result || room.lastResult());
+  result ||= room.lastResult();
+  if (closed && !result) {
+    room.close();
+    toast(`📡 ${closed}`);
+    return versusMenu();
+  }
+  roomResults(room, myId, result);
 }
 
 function roomResults(room, myId, initial) {

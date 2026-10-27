@@ -62,7 +62,7 @@ const TRICK_ORDER = [1, 10, 11, 2, 5, 9, 4, 12, 3, 6, 8, 7];
 function rule(t, o) {
   const p = t * o;
   switch (t) {
-    case 1: return `Anything × 1 stays the same: 1 × ${o} = ${o}`;
+    case 1: return `Anything × 1 stays the same, so the answer is ${o}`;
     case 10: return `× 10? Just stick a zero on the end: ${o} → ${p}`;
     case 11: return o <= 9 ? `× 11 (up to 9): write the number twice → ${o}${o}` : null;
     case 2: return `× 2 means double it: ${o} + ${o} = ${p}`;

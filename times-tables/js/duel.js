@@ -99,6 +99,7 @@ export function runDuel({ players, onAnswer }) {
         s.score.textContent = `${s.correct}/${RACE_TARGET}`;
         s.fill.style.width = `${(s.correct / RACE_TARGET) * 100}%`;
         if (s.correct >= RACE_TARGET) return end(s.i);
+        s.lockUntil = performance.now() + 180;
         setTimeout(() => !done && ask(s), 180);
       } else {
         s.wrong++;
@@ -119,11 +120,11 @@ export function runDuel({ players, onAnswer }) {
       raf = requestAnimationFrame(tick);
     }
 
-    function countdown(then) {
+    function countdown(then, alive = () => true) {
       let n = 3;
       overlay.hidden = false;
       const step = () => {
-        if (done) return;
+        if (done || !alive()) return;
         if (n === 0) {
           overlay.hidden = true;
           sfx.go();
@@ -138,15 +139,19 @@ export function runDuel({ players, onAnswer }) {
     }
 
     // Leaving the app pauses the duel; it resumes with a fresh countdown.
+    let resume = 0;
     const onVis = () => {
       if (done || !startedAt) return;
-      if (document.visibilityState === 'hidden' && !pausedAt) pausedAt = Date.now();
-      else if (document.visibilityState === 'visible' && pausedAt) {
+      if (document.visibilityState === 'hidden') {
+        resume++;
+        if (!pausedAt) pausedAt = Date.now();
+      } else if (pausedAt) {
+        const mine = ++resume;
         countdown(() => {
           startedAt += Date.now() - pausedAt;
           pausedAt = 0;
           sides.forEach(ask);
-        });
+        }, () => mine === resume);
       }
     };
     document.addEventListener('visibilitychange', onVis);

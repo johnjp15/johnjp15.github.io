@@ -65,6 +65,7 @@ export function trainMode(player, { table = null } = {}) {
     },
     skip(r, q) { if (q) queue.splice(Math.min(queue.length, 1), 0, orient(q)); },
     leave(r, q) {
+      if (!q) return { icon: '👋', title: 'Welcome back!', text: 'Pick up where you left off.' };
       this.skip(r, q);
       return { icon: '👋', title: 'Welcome back!', text: 'That question was skipped — no peeking allowed 👀' };
     },

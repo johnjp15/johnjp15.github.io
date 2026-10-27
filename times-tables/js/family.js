@@ -62,10 +62,12 @@ export async function createFamily(name) {
 export const peekFamily = invite => api(`/families/${invite.id}`, { secret: invite.secret });
 
 async function join(f, member) {
-  const r = await api(`/families/${f.id}/members`, { method: 'POST', secret: f.secret, body: member });
+  // An existing member's token proves it's really them re-joining.
+  const r = await api(`/families/${f.id}/members`, { method: 'POST', secret: f.secret, token: f.tokens[member.memberId], body: member });
   f.tokens[member.memberId] = r.token;
   f.name = r.name;
   delete f.removed?.[member.memberId];
+  delete f.sent?.[member.memberId]; // a fresh member record has no progress yet: send it again
   saveFamily(f);
 }
 
@@ -108,9 +110,17 @@ export async function removeMember(memberId) {
   return fetchBoard({ force: true });
 }
 
-/** Put a removed player back (grown-up action). */
+/** Let someone a grown-up removed back in; their device rejoins on its next sync (grown-up action). */
+export async function restoreMember(memberId) {
+  const f = getFamily();
+  await api(`/families/${f.id}/members/${memberId}/restore`, { method: 'POST', secret: f.secret });
+  return fetchBoard({ force: true });
+}
+
+/** Put a removed player on this device back (grown-up action). */
 export async function rejoinPlayer(p) {
   const f = getFamily();
+  await restoreMember(p.id);
   await join(f, { memberId: p.id, role: 'player', name: p.name, avatar: p.avatar });
   return syncPlayer(p, { force: true });
 }
@@ -169,9 +179,29 @@ export function summarize(p) {
  * retried next time). New players on a family device join automatically —
  * unless a grown-up removed them.
  */
-export async function syncPlayer(p, { force = false } = {}) {
+function markRemoved(f, memberId) {
+  delete f.tokens[memberId];
+  f.removed = { ...f.removed, [memberId]: true };
+  saveFamily(f);
+}
+
+/** Remember players the family board lists as removed by a grown-up. */
+export function noteRemoved(memberIds) {
   const f = getFamily();
-  if (!f || !familyEnabled() || f.removed?.[p.id]) return;
+  if (f) for (const id of memberIds) markRemoved(f, id);
+}
+
+export async function syncPlayer(p, { force = false } = {}) {
+  let f = getFamily();
+  if (!f || !familyEnabled()) return;
+  // The board can say a grown-up removed this player before our token is ever refused.
+  if (!f.removed?.[p.id] && f.board?.removed?.some(x => x.memberId === p.id)) markRemoved(f, p.id);
+  if (f.removed?.[p.id]) {
+    // Rejoin once a grown-up has added this player back.
+    const board = (await fetchBoard({ force: true }))?.board;
+    if (!board?.removed || board.removed.some(x => x.memberId === p.id)) return;
+    f = getFamily();
+  }
   try {
     if (!f.tokens[p.id]) await join(f, { memberId: p.id, role: 'player', name: p.name, avatar: p.avatar });
     const body = JSON.stringify({ name: p.name, avatar: p.avatar, summary: summarize(p) });
@@ -187,11 +217,7 @@ export async function syncPlayer(p, { force = false } = {}) {
     if (e.status === 403) {
       // Our token no longer works: a grown-up removed this player.
       const fresh = getFamily();
-      if (fresh?.id === f.id) {
-        delete fresh.tokens[p.id];
-        fresh.removed = { ...fresh.removed, [p.id]: true };
-        saveFamily(fresh);
-      }
+      if (fresh?.id === f.id) markRemoved(fresh, p.id);
     }
   }
 }

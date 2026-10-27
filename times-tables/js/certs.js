@@ -72,6 +72,9 @@ export function setDeviceSeal(seal) {
   if (seal) rememberSeal(seal);
 }
 
+/** Whether this device has confirmed (or set) any parent seal. */
+export const hasKnownSeal = () => lsGet('verifiers', []).length > 0;
+
 /** Seals this device can confirm without asking for the passphrase. */
 function knownSeals() {
   return lsGet('verifiers', []).map(s => ({ raw: b64uDecode(s.raw), fp: b64uDecode(s.fp) }));

@@ -12,6 +12,20 @@ const PREFIX = 'ttq-race-';
 const MAX_PLAYERS = 4;
 const START_DELAY_MS = 4000;
 const CONNECT_TIMEOUT_MS = 12000;
+// Guests ping every HEARTBEAT_MS and the host answers; a phone silent for SILENT_MS is gone.
+const HEARTBEAT_MS = 2000;
+const SILENT_MS = 10000;
+
+/** Every HEARTBEAT_MS; tells fn when this page was frozen (iOS pauses background pages), so silence isn't blamed on others. */
+function every(fn) {
+  let last = Date.now();
+  const timer = setInterval(() => {
+    const now = Date.now();
+    fn(now, now - last > HEARTBEAT_MS * 3);
+    last = now;
+  }, HEARTBEAT_MS);
+  return () => clearInterval(timer);
+}
 
 let loading = null;
 function loadPeer() {
@@ -51,7 +65,7 @@ function emitter() {
   };
 }
 
-const publicPlayers = players => players.map(({ conn, ...p }) => p);
+const publicPlayers = players => players.map(({ conn, seen, ...p }) => p);
 
 /**
  * Host a room. me: { name, avatar }.
@@ -93,16 +107,39 @@ export async function hostRoom(me) {
     ev.emit('result', list);
   };
 
+  const drop = conn => {
+    const i = players.findIndex(x => x.conn === conn);
+    if (i < 0) return;
+    if (state === 'running') {
+      Object.assign(players[i], { done: true, dnf: true, gone: true });
+      delete players[i].conn;
+      result();
+    } else players.splice(i, 1);
+    lobby();
+  };
+  const stopWatch = every((now, frozen) => {
+    for (const p of [...players]) {
+      if (!p.conn) continue;
+      if (frozen) p.seen = now;
+      else if (now - p.seen > SILENT_MS) {
+        const { conn } = p;
+        drop(conn);
+        try { conn.close(); } catch { /* gone */ }
+      }
+    }
+  });
+
   peer.on('connection', conn => {
     conn.on('data', msg => {
       if (!msg || typeof msg !== 'object') return;
       const p = players.find(x => x.conn === conn);
+      if (p) p.seen = Date.now();
       if (msg.t === 'ping') return send(conn, { t: 'pong', t0: msg.t0 });
       if (msg.t === 'hello') {
         if (p) return;
         if (state !== 'lobby' && state !== 'done') return send(conn, { t: 'full', reason: 'That race already started.' });
         if (players.length >= MAX_PLAYERS) return send(conn, { t: 'full', reason: 'That race is full.' });
-        players.push({ id: conn.peer, conn, name: String(msg.name || 'Player').slice(0, 20), avatar: msg.avatar, n: 0, wrong: 0, ms: null, done: false, dnf: false });
+        players.push({ id: conn.peer, conn, seen: Date.now(), name: String(msg.name || 'Player').slice(0, 20), avatar: msg.avatar, n: 0, wrong: 0, ms: null, done: false, dnf: false });
         return lobby();
       }
       if (!p || state !== 'running' || p.done) return;
@@ -116,16 +153,7 @@ export async function hostRoom(me) {
         result();
       }
     });
-    conn.on('close', () => {
-      const i = players.findIndex(x => x.conn === conn);
-      if (i < 0) return;
-      if (state === 'running') {
-        Object.assign(players[i], { done: true, dnf: true, gone: true });
-        delete players[i].conn;
-        result();
-      } else players.splice(i, 1);
-      lobby();
-    });
+    conn.on('close', () => drop(conn));
   });
   peer.on('disconnected', () => { try { peer.reconnect(); } catch { /* destroyed */ } });
 
@@ -161,6 +189,7 @@ export async function hostRoom(me) {
     close() {
       broadcast({ t: 'closed', reason: 'The host left.' });
       clearTimeout(deadline);
+      stopWatch();
       setTimeout(() => peer.destroy(), 300);
     },
   };
@@ -189,8 +218,23 @@ export async function joinRoom(code, me) {
     throw e;
   }
 
+  let heard = Date.now();
+  let ended = false;
+  const end = reason => {
+    if (ended) return;
+    ended = true;
+    stopWatch();
+    ev.emit('closed', reason);
+  };
+  const stopWatch = every((now, frozen) => {
+    if (frozen) heard = now;
+    send({ t: 'ping', t0: now });
+    if (now - heard > SILENT_MS) { end('Lost the connection to the host.'); peer.destroy(); }
+  });
+
   conn.on('data', msg => {
     if (!msg || typeof msg !== 'object') return;
+    heard = Date.now();
     switch (msg.t) {
       case 'pong': rtt = Date.now() - msg.t0; break;
       case 'lobby': players = msg.players; ev.emit('lobby', players); break;
@@ -201,12 +245,12 @@ export async function joinRoom(code, me) {
         break;
       case 'progress': ev.emit('progress', { id: msg.id === conn.peer ? 'host' : msg.id, n: msg.n }); break;
       case 'result': players = msg.players; ev.emit('result', players); break;
-      case 'full': ev.emit('closed', msg.reason); peer.destroy(); break;
-      case 'closed': ev.emit('closed', msg.reason); break;
+      case 'full': end(msg.reason); peer.destroy(); break;
+      case 'closed': end(msg.reason); break;
       default:
     }
   });
-  conn.on('close', () => ev.emit('closed', 'Lost the connection to the host.'));
+  conn.on('close', () => end('Lost the connection to the host.'));
   const send = msg => { try { conn.open && conn.send(msg); } catch { /* gone */ } };
   send({ t: 'ping', t0: Date.now() });
   send({ t: 'hello', name: me.name, avatar: me.avatar });
@@ -220,6 +264,6 @@ export async function joinRoom(code, me) {
     players: () => players,
     progress(n, wrong) { send({ t: 'progress', n, wrong }); },
     finish({ correct, wrong, ms }) { send({ t: 'finish', n: correct, wrong, ms: ms ?? null }); },
-    close() { setTimeout(() => peer.destroy(), 200); },
+    close() { ended = true; stopWatch(); setTimeout(() => peer.destroy(), 200); },
   };
 }
