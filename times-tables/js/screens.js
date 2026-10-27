@@ -637,6 +637,10 @@ function settings() {
     return h('label', { class: 'setting' }, h('span', null, label, hint && h('small', { class: 'muted setting-hint' }, hint)), input);
   };
   page('⚙️ Settings', home,
+    h('button', { class: 'card buddy-row', type: 'button', onclick: changeBuddy },
+      h('span', { class: 'who-av' }, AVATARS[player.avatar] || '🙂'),
+      h('span', { class: 'bm-text' }, h('b', null, player.name), h('small', { class: 'muted' }, 'Tap to change your buddy')),
+      h('span', { class: 'bm-go' }, '›')),
     card(
       h('div', { class: 'stack-form' },
         toggle('sound', '🔊 Sounds'),
@@ -660,6 +664,22 @@ function settings() {
     family.getFamily() && h('button', { class: 'btn btn-ghost wide', type: 'button', onclick: familyScreen }, `👪 ${family.getFamily().name}`),
     h('button', { class: 'btn btn-ghost wide', type: 'button', onclick: parentGate }, '🔒 Parent corner'),
     h('p', { class: 'muted small center' }, `Player ID ${shortId(player.id)} · Times Table Quest`));
+}
+
+async function changeBuddy() {
+  let picked = null;
+  const grid = h('div', { class: 'avatar-pick' }, AVATARS.map((a, i) => h('button', {
+    class: `av ${i === player.avatar ? 'sel' : ''}`, type: 'button', 'aria-label': `Buddy ${i + 1}`,
+    onclick: () => { picked = i; dlg.close(); },
+  }, a)));
+  const dlg = dialog({ title: 'Pick your buddy', body: grid, buttons: [{ label: 'Cancel', value: null }] });
+  await dlg;
+  if (picked == null || picked === player.avatar) return;
+  player.avatar = picked;
+  store.savePlayer(player);
+  family.syncPlayer(player, { force: true });
+  sfx.correct(3);
+  settings();
 }
 
 function parentGate() {

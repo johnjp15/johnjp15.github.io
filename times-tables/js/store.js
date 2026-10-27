@@ -10,10 +10,10 @@ const COOKIE = 'ttq_player';
 const COOKIE_DAYS = 400;
 
 export const DAILY_GOAL = 40; // correct answers per day
-export const AVATARS = ['🦊', '🐼', '🐯', '🦁', '🐸', '🐵', '🦄', '🐲', '🐙', '🦖', '🐧', '🐨', '🐶', '🐱', '🦉', '🐬'];
+export const AVATARS = ['🦊', '🐼', '🐯', '🦁', '🐸', '🐵', '🦄', '🐲', '🐙', '🦖', '🐧', '🐨', '🐶', '🐱', '🦉', '🐬', '🦈']; // only ever append: players store the position
 
 const FUN_NAMES = ['Captain', 'Super', 'Turbo', 'Mega', 'Ninja', 'Rocket', 'Cosmic', 'Thunder'];
-const FUN_ANIMALS = ['Fox', 'Panda', 'Tiger', 'Lion', 'Frog', 'Monkey', 'Unicorn', 'Dragon', 'Octopus', 'Dino', 'Penguin', 'Koala', 'Pup', 'Kitty', 'Owl', 'Dolphin'];
+const FUN_ANIMALS = ['Fox', 'Panda', 'Tiger', 'Lion', 'Frog', 'Monkey', 'Unicorn', 'Dragon', 'Octopus', 'Dino', 'Penguin', 'Koala', 'Pup', 'Kitty', 'Owl', 'Dolphin', 'Shark'];
 
 export function lsGet(key, fallback = null) {
   try {

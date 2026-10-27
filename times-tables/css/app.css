@@ -215,7 +215,9 @@ p { margin: 0.4em 0; }
 .logo i { font-style: normal; color: var(--gold); }
 .onboard-form { text-align: left; margin-top: 18px; display: flex; flex-direction: column; gap: 4px; }
 .onboard-form .btn { margin-top: 18px; }
-.avatar-pick { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
+.avatar-pick { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+.modal .avatar-pick { margin-top: 8px; }
+.buddy-row { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; color: var(--ink); cursor: pointer; }
 .av {
   aspect-ratio: 1; border-radius: 14px; border: 2px solid transparent; background: var(--surface);
   font-size: 1.6rem; display: grid; place-items: center; cursor: pointer; padding: 0;
