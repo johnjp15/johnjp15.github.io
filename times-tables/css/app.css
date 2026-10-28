@@ -816,3 +816,20 @@ p { margin: 0.4em 0; }
 @media (forced-colors: active) {
   .fg-cell, .sbar-seg, .swatch { forced-color-adjust: none; }
 }
+
+/* ---------- battles (health bars) ---------- */
+
+.btn-battle { color: #fff; background: linear-gradient(135deg, #ff5f6d, #c2185b); box-shadow: 0 4px 0 #7a0e3a; }
+.btn-battle:active { box-shadow: 0 1px 0 #7a0e3a; transform: translateY(3px); }
+.race-lane.hp-lane .race-track i, .duel.battle .duel-bar i { background: linear-gradient(90deg, var(--green), var(--cyan)); }
+.race-lane.hp-lane.hp-mid .race-track i, .duel.battle .hp-mid .duel-bar i { background: var(--gold); }
+.race-lane.hp-lane.hp-low .race-track i, .duel.battle .hp-low .duel-bar i { background: var(--bad); }
+.race-lane.hp-lane.ko { opacity: 0.45; }
+.potion-btn {
+  flex: none; padding: 4px 10px; border-radius: 12px; border: 1px solid var(--line);
+  background: var(--surface-2); color: var(--ink); font: inherit; font-weight: 800; font-size: 0.85rem; white-space: nowrap;
+  touch-action: manipulation;
+}
+.potion-btn.armed { background: var(--good); border-color: var(--good); color: #05210f; animation: pulse 0.6s ease infinite alternate; }
+.potion-btn:disabled { opacity: 0.45; }
+.rules { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; }

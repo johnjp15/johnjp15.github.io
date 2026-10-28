@@ -6,6 +6,7 @@
 
 import { lsGet } from './store.js';
 import { newSeed, RACE_MAX_MS } from './race.js';
+import { BATTLE_MAX_MS, newFighters, applyMove, standing } from './battle.js';
 
 const PEER_SCRIPT = new URL('./vendor/peerjs-1.5.5.min.js', import.meta.url).href;
 const PREFIX = 'ttq-race-';
@@ -69,8 +70,9 @@ const publicPlayers = players => players.map(({ conn, seen, ...p }) => p);
 
 /**
  * Host a room. me: { name, avatar }.
- * Room events: 'lobby' (players), 'start' ({ seed, startAt }), 'progress' ({ id, n }),
- * 'result' (players), 'closed' (reason).
+ * Room events: 'lobby' (players), 'start' ({ seed, startAt, kind }), 'progress' ({ id, n }),
+ * 'hp' ({ fighters, last }) in battles, 'result' (players), 'closed' (reason).
+ * kind is 'race' or 'battle'; in a battle the host keeps everyone's health.
  */
 export async function hostRoom(me) {
   const Peer = await loadPeer();
@@ -93,26 +95,46 @@ export async function hostRoom(me) {
   const players = [{ id: 'host', name: me.name, avatar: me.avatar, n: 0, wrong: 0, ms: null, done: false, dnf: false }];
   let state = 'lobby';
   let race = null;
+  let fighters = null;
   let deadline = null;
+  const battle = () => race?.kind === 'battle';
 
   const send = (conn, msg) => { try { conn.open && conn.send(msg); } catch { /* gone */ } };
   const broadcast = msg => players.forEach(p => p.conn && send(p.conn, msg));
   const lobby = () => { const list = publicPlayers(players); broadcast({ t: 'lobby', players: list, state }); ev.emit('lobby', list); };
-  const result = () => {
-    if (state !== 'running' || !players.every(p => p.done)) return;
+  const result = (force = false) => {
+    if (state !== 'running') return;
+    if (!force && (battle() ? standing(fighters).length > 1 : !players.every(p => p.done))) return;
     state = 'done';
     clearTimeout(deadline);
+    if (battle()) for (const p of players) Object.assign(p, fighters[p.id]);
     const list = publicPlayers(players);
     broadcast({ t: 'result', players: list });
     ev.emit('result', list);
   };
 
+  // Battles: apply someone's move (or forfeit) and tell everyone the new health.
+  const battleMove = (id, move) => {
+    if (state !== 'running' || !battle() || !fighters[id]) return;
+    const at = Math.max(0, Date.now() - race.startAt);
+    const f = fighters[id];
+    let hit = null;
+    if (move === 'forfeit') {
+      if (f.ko == null) { Object.assign(f, { hp: 0, ko: at }); hit = { target: id, amount: 0 }; }
+    } else hit = applyMove(fighters, id, move, at);
+    if (!hit) return;
+    const msg = { t: 'hp', fighters, last: { from: id, move, ...hit } };
+    broadcast(msg);
+    ev.emit('hp', msg);
+    result();
+  };
   const drop = conn => {
     const i = players.findIndex(x => x.conn === conn);
     if (i < 0) return;
     if (state === 'running') {
       Object.assign(players[i], { done: true, dnf: true, gone: true });
       delete players[i].conn;
+      battleMove(players[i].id, 'forfeit');
       result();
     } else players.splice(i, 1);
     lobby();
@@ -143,6 +165,7 @@ export async function hostRoom(me) {
         return lobby();
       }
       if (!p || state !== 'running' || p.done) return;
+      if (msg.t === 'move') battleMove(p.id, String(msg.move));
       if (msg.t === 'progress') {
         Object.assign(p, { n: Number(msg.n) || 0, wrong: Number(msg.wrong) || 0 });
         broadcast({ t: 'progress', id: p.id, n: p.n });
@@ -163,21 +186,28 @@ export async function hostRoom(me) {
     on: ev.on,
     lastResult: ev.lastResult,
     players: () => publicPlayers(players),
-    /** Start (or restart) a race for everyone in the room. */
-    start() {
+    kind: () => race?.kind || 'race',
+    /** Start (or restart) a race or a battle for everyone in the room. */
+    start(kind = 'race') {
       if (players.length < 2 || state === 'running') return;
       state = 'running';
-      race = { seed: newSeed() };
-      for (const p of players) Object.assign(p, { n: 0, wrong: 0, ms: null, done: false, dnf: false });
+      race = { seed: newSeed(), kind, startAt: Date.now() + START_DELAY_MS };
       for (let i = players.length - 1; i > 0; i--) if (players[i].gone) players.splice(i, 1);
-      broadcast({ t: 'start', seed: race.seed, delay: START_DELAY_MS, players: publicPlayers(players) });
-      ev.emit('start', { seed: race.seed, startAt: Date.now() + START_DELAY_MS, players: publicPlayers(players) });
-      // Close out the race even if someone's phone went quiet.
+      for (const p of players) {
+        Object.assign(p, { n: 0, wrong: 0, ms: null, done: false, dnf: false });
+        delete p.hp;
+        delete p.ko;
+      }
+      fighters = battle() ? newFighters(players.map(p => p.id)) : null;
+      broadcast({ t: 'start', seed: race.seed, kind, delay: START_DELAY_MS, players: publicPlayers(players) });
+      ev.emit('start', { seed: race.seed, kind, startAt: race.startAt, players: publicPlayers(players) });
+      // Close out the race even if someone's phone went quiet; a battle ends on time with the most health winning.
       deadline = setTimeout(() => {
-        for (const p of players) if (!p.done) Object.assign(p, { done: true, dnf: true });
-        result();
-      }, START_DELAY_MS + RACE_MAX_MS + 15000);
+        for (const p of players) if (!p.done) Object.assign(p, { done: true, dnf: !battle() });
+        result(true);
+      }, START_DELAY_MS + (battle() ? BATTLE_MAX_MS + 3000 : RACE_MAX_MS + 15000));
     },
+    move(m) { battleMove('host', m); },
     progress(n, wrong) {
       Object.assign(players[0], { n, wrong });
       broadcast({ t: 'progress', id: 'host', n });
@@ -207,6 +237,7 @@ export async function joinRoom(code, me) {
   const ev = emitter();
   let players = [];
   let rtt = 0;
+  let kind = 'race';
   try {
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Couldn\'t connect to that phone. Check the code, and try both phones on the same Wi-Fi.')), CONNECT_TIMEOUT_MS);
@@ -240,10 +271,12 @@ export async function joinRoom(code, me) {
       case 'lobby': players = msg.players; ev.emit('lobby', players); break;
       case 'start':
         players = msg.players;
+        kind = msg.kind || 'race';
         // The host started its countdown when it sent this; allow for the trip here.
-        ev.emit('start', { seed: msg.seed, startAt: Date.now() + msg.delay - rtt / 2, players });
+        ev.emit('start', { seed: msg.seed, kind, startAt: Date.now() + msg.delay - rtt / 2, players });
         break;
       case 'progress': ev.emit('progress', { id: msg.id === conn.peer ? 'host' : msg.id, n: msg.n }); break;
+      case 'hp': ev.emit('hp', { fighters: msg.fighters, last: msg.last }); break;
       case 'result': players = msg.players; ev.emit('result', players); break;
       case 'full': end(msg.reason); peer.destroy(); break;
       case 'closed': end(msg.reason); break;
@@ -262,7 +295,9 @@ export async function joinRoom(code, me) {
     on: ev.on,
     lastResult: ev.lastResult,
     players: () => players,
+    kind: () => kind,
     progress(n, wrong) { send({ t: 'progress', n, wrong }); },
+    move(m) { send({ t: 'move', move: m }); },
     finish({ correct, wrong, ms }) { send({ t: 'finish', n: correct, wrong, ms: ms ?? null }); },
     close() { ended = true; stopWatch(); setTimeout(() => peer.destroy(), 200); },
   };

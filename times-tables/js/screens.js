@@ -17,6 +17,7 @@ import { familyBoard, familyStrip } from './family-view.js';
 import { runDuel } from './duel.js';
 import { RACE_TARGET, fmtRace, newSeed } from './race.js';
 import { raceMode } from './race-mode.js';
+import { battleMode, battleOrder, BATTLE_MAX_MS } from './battle.js';
 import { connectLive, onLive, liveSend, liveState, toLocal } from './live.js';
 import { hostRoom, joinRoom } from './room.js';
 
@@ -1110,7 +1111,7 @@ async function manageFamily(back) {
 function versusMenu() {
   const inFamily = family.familyEnabled() && family.getFamily();
   page('⚔️ Versus', home,
-    h('p', { class: 'muted center' }, `Race to ${RACE_TARGET} correct answers. Everyone gets the same questions. A wrong answer costs 1.5 seconds!`),
+    h('p', { class: 'muted center' }, `🏁 Race to ${RACE_TARGET} correct answers, or ⚔️ battle with health bars. Everyone gets the same questions.`),
     h('button', { class: 'btn btn-primary vs-option', type: 'button', onclick: duelSetup },
       h('span', { class: 'bm-icon' }, '📱'),
       h('span', { class: 'bm-text' }, h('b', null, 'Duel on this phone'), h('small', null, 'Two players, one screen, face to face'))),
@@ -1389,8 +1390,8 @@ function duelSetup() {
         h('span', { class: 'vs-sep' }, 'VS'),
         h('div', null, h('label', { class: 'field-label' }, '⬇️ Bottom'), s1)),
       guestName),
-    h('button', {
-      class: 'btn btn-primary btn-big', type: 'button',
+    ...['race', 'battle'].map(kind => h('button', {
+      class: `btn ${kind === 'race' ? 'btn-primary' : 'btn-battle'} btn-big`, type: 'button',
       onclick: () => {
         if (s1.value === s2.value && s1.value !== 'guest') { msg.textContent = 'Pick two different players.'; return; }
         const pick = id => {
@@ -1398,15 +1399,28 @@ function duelSetup() {
           const p = store.loadPlayer(id);
           return { id, name: p.name, avatar: AVATARS[p.avatar] || '🙂', player: p };
         };
-        startDuel([pick(s1.value), pick(s2.value)]);
+        startDuel([pick(s1.value), pick(s2.value)], kind);
       },
-    }, '⚔️ Start duel'),
-    msg);
+    }, kind === 'race' ? `🏁 Race to ${RACE_TARGET}` : '⚔️ Battle')),
+    msg,
+    battleRules());
 }
 
-async function startDuel(sides) {
+/** How a battle works, in one card. */
+const battleRules = () => card(
+  h('h3', null, '⚔️ Battle rules'),
+  h('ul', { class: 'small rules' },
+    h('li', null, 'Everyone starts with ❤️ 100.'),
+    h('li', null, 'A right answer attacks: −10, or ⚡ −15 if it took under 3 seconds.'),
+    h('li', null, 'Tap 🧪 Heal and your next right answer heals you +20. You start with one potion and earn another for every 3 right in a row.'),
+    h('li', null, 'A wrong answer hurts you −5.'),
+    h('li', null, `Last one standing wins. After ${BATTLE_MAX_MS / 60000} minutes, the most health wins.`)));
+
+async function startDuel(sides, kind = 'race') {
+  const battle = kind === 'battle';
   const res = await runDuel({
     players: sides,
+    battle,
     onAnswer: (i, q, r) => { if (sides[i].player) store.recordAnswer(sides[i].player, q, r); },
   });
   for (const [i, s] of sides.entries()) {
@@ -1420,18 +1434,18 @@ async function startDuel(sides) {
     if (s.player.id === player.id) player = s.player;
     family.syncPlayer(s.player);
   }
-  if (res.rematch) return startDuel(sides);
+  if (res.rematch) return startDuel(sides, kind);
   if (res.quit) return versusMenu();
   const w = sides[res.winner];
-  page('⚔️ Duel over', null,
+  page(battle ? '⚔️ Battle over' : '⚔️ Duel over', null,
     h('div', { class: 'sum-hero' },
       h('div', { class: 'sum-emoji' }, '🏆'),
       h('h2', null, `${w.avatar} ${w.name} wins!`),
-      h('p', { class: 'muted' }, `${fmtRace(res.stats[res.winner].ms)} to ${RACE_TARGET} correct`)),
+      h('p', { class: 'muted' }, battle ? `❤️ ${res.stats[res.winner].hp} health left` : `${fmtRace(res.stats[res.winner].ms)} to ${RACE_TARGET} correct`)),
     h('div', { class: 'tiles' },
       ...sides.map((s, i) => h('div', { class: 'tile' }, h('div', { class: 'tile-value' }, `${s.avatar} ${res.stats[i].correct}`), h('div', { class: 'tile-label' }, `${s.name} · ✗ ${res.stats[i].wrong}`)))),
     h('div', { class: 'btn-row' },
-      h('button', { class: 'btn btn-primary', type: 'button', onclick: () => startDuel(sides) }, '🔁 Rematch'),
+      h('button', { class: 'btn btn-primary', type: 'button', onclick: () => startDuel(sides, kind) }, '🔁 Rematch'),
       h('button', { class: 'btn btn-ghost', type: 'button', onclick: home }, 'Home')));
 }
 
@@ -1493,8 +1507,10 @@ function roomLobby(room) {
           h('span', { class: 'race-av' }, avatarOf(p.avatar)), h('b', null, p.name), p.id === 'host' ? ' 👑' : '',
           p.id === myId ? h('span', { class: 'chip' }, 'You') : null))),
         !room.isHost && h('p', { class: 'small muted' }, 'Waiting for the host to start…')),
-      room.isHost && h('button', { class: 'btn btn-primary btn-big', type: 'button', disabled: racers.length < 2, onclick: () => room.start() },
+      room.isHost && h('button', { class: 'btn btn-primary btn-big', type: 'button', disabled: racers.length < 2, onclick: () => room.start('race') },
         racers.length < 2 ? 'Waiting for someone to join…' : `🏁 Start the race (${racers.length} racers)`),
+      room.isHost && racers.length >= 2 && h('button', { class: 'btn btn-battle btn-big', type: 'button', onclick: () => room.start('battle') }, `⚔️ Start a battle (${racers.length} players)`),
+      room.isHost && racers.length >= 2 && h('p', { class: 'small muted center' }, 'Battle: health bars instead of a race. Right answers attack, 🧪 potions heal.'),
       h('button', { class: 'btn btn-ghost wide', type: 'button', onclick: leave }, room.isHost ? 'Close the race' : 'Leave'),
     ].filter(Boolean));
   };
@@ -1508,6 +1524,7 @@ function roomLobby(room) {
 }
 
 async function runRoomRace(room, start) {
+  if (start.kind === 'battle') return runRoomBattle(room, start);
   const myId = room.isHost ? 'host' : room.myId;
   const lanes = start.players.filter(p => p.id !== myId).map(p => ({ id: p.id, name: p.name, avatar: p.avatar }));
   const mode = raceMode(player, {
@@ -1534,14 +1551,52 @@ async function runRoomRace(room, start) {
   roomResults(room, myId, result);
 }
 
+async function runRoomBattle(room, start) {
+  const myId = room.isHost ? 'host' : room.myId;
+  const foes = start.players.filter(p => p.id !== myId).map(p => ({ id: p.id, name: p.name, avatar: p.avatar }));
+  const mode = battleMode(player, { seed: start.seed, myId, foes, startAt: start.startAt, onMove: m => room.move(m) });
+  let result = null;
+  let closed = null;
+  const off = room.on((type, data) => {
+    if (type === 'hp') mode.setFighters(data.fighters);
+    if (type === 'result') { result = data; mode.end(); }
+    if (type === 'closed') { closed = data; mode.end(); }
+  });
+  const res = await play(mode);
+  if (res.quit) room.move('forfeit');
+  room.finish({ correct: res.correct, wrong: res.wrong, ms: null });
+  off();
+  family.syncPlayer(player);
+  result ||= room.lastResult();
+  if (closed && !result) {
+    room.close();
+    toast(`📡 ${closed}`);
+    return versusMenu();
+  }
+  roomResults(room, myId, result);
+}
+
+/** Result rows for a race or a battle: [{ id, name, avatar, done, text }], winner first. */
+function roomRows(players, kind) {
+  if (kind !== 'battle') {
+    return family.standings(Object.fromEntries(players.map(p => [p.id, p])))
+      .map(x => ({ ...x, done: x.ms != null, text: x.ms != null ? fmtRace(x.ms) : `${x.n}/${RACE_TARGET}${x.gone ? ' · left' : ''}` }));
+  }
+  const byId = Object.fromEntries(players.map(p => [p.id, p]));
+  return battleOrder(byId).map(id => byId[id])
+    .map(x => ({ ...x, done: x.ko == null, text: x.ko == null ? `❤️ ${x.hp}` : `💥 KO${x.gone ? ' · left' : ''}` }));
+}
+
 function roomResults(room, myId, initial) {
   let players = initial;
   let cheered = false;
   const body = h('div', { class: 'stack-form' });
   const leave = () => { off(); room.close(); versusMenu(); };
   const render = () => {
-    const rows = players ? family.standings(Object.fromEntries(players.map(p => [p.id, p]))) : null;
-    const won = rows && rows[0].id === myId && rows[0].ms != null;
+    const battle = room.kind() === 'battle';
+    const rows = players ? roomRows(players, room.kind()) : null;
+    const draw = battle && rows?.[1]?.done && rows[0].hp === rows[1].hp;
+    const won = rows && rows[0].id === myId && rows[0].done && !draw;
     if (rows && !cheered) {
       cheered = true;
       if (won) { confetti(); sfx.win(); } else sfx.slow();
@@ -1549,12 +1604,14 @@ function roomResults(room, myId, initial) {
     body.replaceChildren(...[
       h('div', { class: 'sum-hero' },
         h('div', { class: 'sum-emoji' }, !rows ? '⏳' : won ? '🏆' : '🏁'),
-        h('h2', null, !rows ? 'Waiting for everyone to finish…' : rows[0].ms == null ? 'Nobody finished!' : won ? 'You won!' : `${rows[0].name} won!`)),
+        h('h2', null, !rows ? (battle ? 'Waiting for the battle to end…' : 'Waiting for everyone to finish…') : draw ? 'It\'s a draw!' : !rows[0].done ? 'Nobody finished!' : won ? 'You won!' : `${rows[0].name} won!`)),
       rows && card(h('ol', { class: 'standings' }, rows.map((x, i) => h('li', { class: x.id === myId ? 'me' : '' },
         h('span', null, medal(i)), h('span', { class: 'race-av' }, avatarOf(x.avatar)), h('b', null, x.name),
-        h('span', { class: 'muted' }, x.ms != null ? fmtRace(x.ms) : `${x.n}/${RACE_TARGET}${x.gone ? ' · left' : ''}`))))),
-      rows && room.isHost && h('button', { class: 'btn btn-primary btn-big', type: 'button', disabled: room.players().length < 2, onclick: () => room.start() }, '🔁 Race again'),
-      rows && !room.isHost && h('p', { class: 'muted center small' }, 'If the host starts another race, you\'ll join it automatically.'),
+        h('span', { class: 'muted' }, x.text))))),
+      rows && room.isHost && h('div', { class: 'btn-row' },
+        h('button', { class: 'btn btn-primary', type: 'button', disabled: room.players().length < 2, onclick: () => room.start('race') }, '🏁 Race'),
+        h('button', { class: 'btn btn-battle', type: 'button', disabled: room.players().length < 2, onclick: () => room.start('battle') }, '⚔️ Battle')),
+      rows && !room.isHost && h('p', { class: 'muted center small' }, 'If the host starts another round, you\'ll join it automatically.'),
       h('button', { class: 'btn btn-ghost wide', type: 'button', onclick: leave }, 'Leave'),
     ].filter(Boolean));
   };

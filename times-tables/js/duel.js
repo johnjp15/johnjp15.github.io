@@ -1,23 +1,27 @@
 // Duel: two players on one phone or iPad, face to face. Each half of the screen
 // has its own question and keypad (the top half is upside down for the player
 // across the table). Same questions in the same order for both; first to 15
-// correct wins; a wrong answer locks that player's keypad for 1.5 s.
+// correct wins; a wrong answer locks that player's keypad for 1.5 s. In a battle
+// (battle.js) each side has a health bar instead, and right answers attack.
 
 import { h } from './util.js';
 import { RACE_TARGET, PENALTY_MS, raceStream, newSeed, fmtRace } from './race.js';
 import { sfx, music } from './sfx.js';
 import { confetti, shake } from './fx.js';
+import { MAX_HP, BATTLE_MAX_MS, moveFor, newFighters, applyMove, moveText, potions, potionLabel } from './battle.js';
 
 const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'del', '0', 'ok'];
 
 /**
  * players: [{ name, avatar }] (index 0 = bottom, 1 = top).
  * onAnswer(index, q, result) lets the caller record answers for real players.
- * Resolves with { winner, stats: [{ correct, wrong, ms }], quit }.
+ * battle: health bars instead of a race to 15.
+ * Resolves with { winner, stats: [{ correct, wrong, ms, hp }], quit }.
  */
-export function runDuel({ players, onAnswer }) {
+export function runDuel({ players, onAnswer, battle = false }) {
   return new Promise(resolve => {
     const seed = newSeed();
+    const fighters = newFighters(['0', '1']);
     let startedAt = 0;
     let pausedAt = 0;
     let done = false;
@@ -26,7 +30,7 @@ export function runDuel({ players, onAnswer }) {
 
     const clock = h('b', { class: 'duel-clock' }, '0.0s');
     const overlay = h('div', { class: 'duel-overlay', hidden: true });
-    const el = h('div', { class: 'screen duel' },
+    const el = h('div', { class: `screen duel${battle ? ' battle' : ''}` },
       sides[1].el,
       h('div', { class: 'duel-mid' },
         h('button', { class: 'g-quit', type: 'button', 'aria-label': 'Stop the duel', onclick: () => end(null, true) }, '✕'),
@@ -39,7 +43,21 @@ export function runDuel({ players, onAnswer }) {
       const stream = raceStream(seed);
       const s = { p, i, stream, q: null, input: '', correct: 0, wrong: 0, lockUntil: 0, t0: 0, combo: 0 };
       const fill = h('i');
-      s.score = h('b', null, `0/${RACE_TARGET}`);
+      s.score = h('b', null, battle ? `❤️ ${MAX_HP}` : `0/${RACE_TARGET}`);
+      if (battle) {
+        s.potionBtn = h('button', { class: 'potion-btn', type: 'button' }, potionLabel({ count: 1 }));
+        s.pot = potions(st => {
+          s.potionBtn.textContent = potionLabel(st);
+          s.potionBtn.classList.toggle('armed', st.armed && st.count > 0);
+          s.potionBtn.disabled = st.count === 0;
+        });
+        s.potionBtn.addEventListener('pointerdown', e => {
+          e.preventDefault();
+          if (done || !startedAt || pausedAt) return;
+          s.pot.toggle();
+          sfx.coin();
+        });
+      }
       s.qEl = h('div', { class: 'duel-q' });
       s.ansEl = h('div', { class: 'duel-ans empty' }, '?');
       s.msg = h('div', { class: 'duel-msg' });
@@ -59,7 +77,7 @@ export function runDuel({ players, onAnswer }) {
       s.el = h('section', { class: `duel-half side-${i}` },
         h('header', { class: 'duel-head' },
           h('span', { class: 'duel-av' }, p.avatar), h('b', { class: 'duel-name' }, p.name),
-          h('span', { class: 'duel-bar' }, fill), s.score),
+          h('span', { class: 'duel-bar' }, fill), s.score, s.potionBtn),
         s.card, pad);
       return s;
     }
@@ -91,6 +109,7 @@ export function runDuel({ players, onAnswer }) {
       const given = Number(s.input);
       const correct = given === s.q.answer;
       onAnswer?.(s.i, s.q, { correct, fast: correct && ms < 3000, ms, given, timeout: false, combo: correct ? s.combo + 1 : 0 });
+      if (battle) return battleAnswer(s, { correct, fast: correct && ms < 3000 });
       if (correct) {
         s.correct++;
         s.combo++;
@@ -114,9 +133,55 @@ export function runDuel({ players, onAnswer }) {
       }
     }
 
+    function showHp(s) {
+      const { hp, ko } = fighters[s.i];
+      s.fill.style.width = `${(hp / MAX_HP) * 100}%`;
+      s.score.textContent = ko != null ? '💥 KO' : `❤️ ${hp}`;
+      s.el.classList.toggle('hp-mid', hp <= 50);
+      s.el.classList.toggle('hp-low', hp <= 25);
+    }
+
+    function battleAnswer(s, res) {
+      const move = moveFor(res, s.pot.armed);
+      s.pot.answered(res.correct);
+      const hit = applyMove(fighters, String(s.i), move, Date.now() - startedAt);
+      const target = sides[Number(hit.target)];
+      sides.forEach(showHp);
+      s.msg.textContent = moveText(move, hit.amount);
+      if (res.correct) {
+        s.correct++;
+        s.combo++;
+        s.card.classList.add('good');
+        if (move === 'heal') sfx.coin();
+        else { sfx.hit(); shake(target.card); }
+      } else {
+        s.wrong++;
+        s.combo = 0;
+        sfx.wrong();
+        shake(s.card);
+        s.card.classList.add('bad');
+        s.ansEl.textContent = String(s.q.answer);
+      }
+      const out = sides.find(x => fighters[x.i].ko != null);
+      if (out) return end(1 - out.i);
+      const wait = res.correct ? 260 : PENALTY_MS;
+      s.lockUntil = performance.now() + wait;
+      setTimeout(() => !done && ask(s), wait);
+    }
+
+    // A battle that runs out of time goes to whoever has more health.
+    const leader = () => {
+      const [a, b] = [fighters[0].hp, fighters[1].hp];
+      return a !== b ? (a > b ? 0 : 1) : sides[1].correct > sides[0].correct ? 1 : 0;
+    };
+
     function tick() {
       if (done) return;
-      if (startedAt && !pausedAt) clock.textContent = fmtRace(Date.now() - startedAt);
+      if (startedAt && !pausedAt) {
+        const el = Date.now() - startedAt;
+        clock.textContent = fmtRace(el);
+        if (battle && el > BATTLE_MAX_MS) return end(leader());
+      }
       raf = requestAnimationFrame(tick);
     }
 
@@ -165,7 +230,7 @@ export function runDuel({ players, onAnswer }) {
       document.removeEventListener('visibilitychange', onVis);
       music.stop();
       const ms = startedAt ? Date.now() - startedAt : 0;
-      const stats = sides.map(s => ({ correct: s.correct, wrong: s.wrong, ms }));
+      const stats = sides.map(s => ({ correct: s.correct, wrong: s.wrong, ms, hp: fighters[s.i].hp }));
       if (quit) {
         document.documentElement.classList.remove('in-game');
         return resolve({ winner: null, stats, quit: true });
@@ -175,7 +240,7 @@ export function runDuel({ players, onAnswer }) {
       const banner = s => h('div', { class: `duel-result ${s.i === winner ? 'won' : 'lost'} side-${s.i}` },
         h('div', { class: 'duel-result-emoji' }, s.i === winner ? '🏆' : '😅'),
         h('b', null, s.i === winner ? `${s.p.name} wins!` : 'So close!'),
-        h('small', null, `${s.correct}/${RACE_TARGET} · ${fmtRace(ms)}`));
+        h('small', null, battle ? (fighters[s.i].ko != null ? '💥 Knocked out' : `❤️ ${fighters[s.i].hp} left`) : `${s.correct}/${RACE_TARGET} · ${fmtRace(ms)}`));
       overlay.hidden = false;
       overlay.classList.add('final');
       overlay.replaceChildren(
@@ -191,7 +256,7 @@ export function runDuel({ players, onAnswer }) {
     tick();
     countdown(() => {
       startedAt = Date.now();
-      music.play('race');
+      music.play(battle ? 'battle' : 'race');
       sides.forEach(ask);
     });
   });
