@@ -1,6 +1,6 @@
 // Network-first service worker: always fetch the latest version, fall back to
 // the cached copy when offline (car rides!). The app is cached on first visit.
-const CACHE = 'ttq-v11';
+const CACHE = 'ttq-v12';
 const SHELL = [
   './', './index.html', './results.html', './manifest.webmanifest', './css/app.css',
   './js/app.js', './js/results-page.js', './js/screens.js', './js/game.js', './js/modes.js',

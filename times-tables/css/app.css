@@ -39,6 +39,13 @@
   --safe-r: env(safe-area-inset-right, 0px);
 }
 
+/* From the Home Screen, iOS 26+ blurs a band at the top of the screen that reaches about 40pt
+   below the status bar (Liquid Glass), and nothing turns that off. Keep everything clear of it. */
+@media (display-mode: standalone) {
+  :root { --safe-t: calc(env(safe-area-inset-top, 0px) + 40px); }
+}
+html.standalone { --safe-t: calc(env(safe-area-inset-top, 0px) + 40px); }
+
 *, *::before, *::after { box-sizing: border-box; }
 
 html {
