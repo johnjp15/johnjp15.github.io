@@ -7,7 +7,7 @@
 // as missed and logs the leave. A calculator can't help with a question you
 // can no longer see.
 
-import { h } from './util.js';
+import { h, keypadKeys } from './util.js';
 import { FAST_MS } from './facts.js';
 import { sfx, haptic, music, toggleMusic, musicOn } from './sfx.js';
 import { floatText, shake, dialog } from './fx.js';
@@ -18,6 +18,10 @@ export function play(mode) {
 }
 
 const BLIP_MS = 400; // focus losses shorter than this (and not hidden) aren't leaving
+
+let keypad = 'calc';
+/** 'calc' (7 8 9 on top) or 'phone' (1 2 3 on top), from the player's settings. */
+export const setKeypad = layout => { keypad = layout === 'phone' ? 'phone' : 'calc'; };
 
 class Round {
   constructor(mode, resolve) {
@@ -45,7 +49,7 @@ class Round {
 
   build() {
     const pad = h('div', { class: 'pad', role: 'group', 'aria-label': 'Number pad' },
-      ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'del', '0', 'ok'].map(k =>
+      keypadKeys(keypad).map(k =>
         h('button', {
           class: `key key-${k}`, 'data-k': k, type: 'button',
           'aria-label': k === 'del' ? 'Delete' : k === 'ok' ? 'Enter' : k,
@@ -186,6 +190,11 @@ class Round {
     this.cont = null;
     const q = this.m.next(this);
     if (!q) return this.finish();
+    if (this.m.limitNow) {
+      // Modes whose time per question changes as the game goes on.
+      this.limit = this.m.limitNow();
+      this.bar.querySelector('b').style.left = `${Math.max(0, 1 - FAST_MS / this.limit) * 100}%`;
+    }
     this.q = { ...q, answer: q.a * q.b };
     this.input = '';
     this.phase = 'ask';

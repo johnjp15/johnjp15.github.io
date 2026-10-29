@@ -70,6 +70,10 @@ export function yesterdayKey(ts = Date.now()) {
 }
 
 /** Trim to at most n characters without splitting an emoji. */
+/** Keypad keys in display order: 'calc' has 7 8 9 on top (like Calculator), 'phone' has 1 2 3 on top. */
+export const keypadKeys = (layout = 'calc') =>
+  [...(layout === 'phone' ? '123456789' : '789456123'), 'del', '0', 'ok'];
+
 export const clip = (text, n) => [...String(text).trim()].slice(0, n).join('');
 
 export const fmtSec = ms => `${(ms / 1000).toFixed(1)}s`;

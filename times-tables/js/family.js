@@ -4,7 +4,7 @@
 
 import { FAMILY_API } from './config.js';
 import { lsGet, lsSet, DAILY_GOAL, levelInfo } from './store.js';
-import { memorizedCount } from './srs.js';
+import { memorizedCount, tableMastery, MEMORIZED_BOX } from './srs.js';
 import { dayKey } from './util.js';
 import { TOTAL } from './facts.js';
 
@@ -158,8 +158,9 @@ export function summarize(p) {
   }
   const done = p.tests.filter(t => !t.sum.reason);
   const last = p.tests[p.tests.length - 1];
+  const check = t => ({ seq: t.seq, start: t.start, instant: t.sum.instant, correct: t.sum.correct, asked: t.sum.asked, reason: t.sum.reason });
   return {
-    v: 1,
+    v: 2,
     goal: DAILY_GOAL,
     total: TOTAL,
     days,
@@ -169,8 +170,20 @@ export function summarize(p) {
     lastActive: p.lastActive || null,
     bosses: Object.values(p.bosses).filter(b => b.stars > 0).length,
     blitzBest: p.blitzBest,
-    lastCheck: last ? { seq: last.seq, start: last.start, instant: last.sum.instant, correct: last.sum.correct, asked: last.sum.asked, reason: last.sum.reason } : null,
+    lastCheck: last ? check(last) : null,
     bestCheck: done.length ? Math.max(...done.map(t => t.sum.instant)) : null,
+    // For a grown-up's progress page.
+    tables: Array.from({ length: 12 }, (_, i) => Math.round(tableMastery(p, i + 1) * 100)),
+    practice: Object.entries(p.facts)
+      .map(([key, st]) => ({ key, misses: st.n - st.c, b: st.b }))
+      .filter(x => x.misses > 0 && x.b < MEMORIZED_BOX)
+      .sort((x, y) => y.misses - x.misses || x.b - y.b)
+      .slice(0, 8)
+      .map(x => x.key),
+    checks: p.tests.slice(-8).map(check),
+    answers: p.stats.answers,
+    correct: p.stats.correct,
+    duels: p.versus ? { played: p.versus.duels, won: p.versus.duelWins } : null,
   };
 }
 

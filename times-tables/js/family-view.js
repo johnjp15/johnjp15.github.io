@@ -1,6 +1,6 @@
 // The family board (everyone's practice, side by side) and the small strip on Home.
 
-import { h, fmtAgo, fmtShortDate } from './util.js';
+import { h, fmtAgo, fmtShortDate, plural, dayKey } from './util.js';
 import { AVATARS } from './store.js';
 import { todayOf, streakOf, weekOf, familyStreak } from './family.js';
 
@@ -24,7 +24,7 @@ function weekStrip(m) {
     }, h('i'), h('small', null, d.weekday))));
 }
 
-function memberCard(m, meIds, online = []) {
+function memberCard(m, meIds, online = [], onOpen = null) {
   const s = m.summary;
   const streak = streakOf(m);
   const check = s.lastCheck;
@@ -44,13 +44,82 @@ function memberCard(m, meIds, online = []) {
       h('span', null, '🏅 ', check
         ? h('b', null, check.reason ? `#${check.seq} unfinished` : `${check.instant}/${s.total || 78}`)
         : h('b', null, 'no check yet'),
-        check && !check.reason ? ` · ${fmtShortDate(check.start)}` : '')));
+        check && !check.reason ? ` · ${fmtShortDate(check.start)}` : '')),
+    onOpen && h('button', { class: 'btn btn-ghost btn-small fam-open', type: 'button', onclick: () => onOpen(m) }, '📈 See progress ›'));
+}
+
+/** Last 14 days as bars of right answers, with the daily goal marked. */
+function fortnight(m) {
+  const s = m.summary;
+  const goal = s.goal || 40;
+  const top = goal * 1.5;
+  const d = new Date();
+  d.setDate(d.getDate() - 13);
+  const bars = [];
+  for (let i = 0; i < 14; i++) {
+    const key = dayKey(d.getTime());
+    const rec = s.days?.[key];
+    const c = rec?.c || 0;
+    bars.push(h('div', { class: `kid-day ${c >= goal ? 'goal' : rec && rec.a + rec.f > 0 ? 'some' : ''}`, title: `${d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}: ${c} right${rec?.f ? `, ${rec.f} flash cards` : ''}` },
+      h('i', { style: { height: `${Math.min(1, c / top) * 100}%` } }),
+      h('small', null, d.toLocaleDateString(undefined, { weekday: 'narrow' }))));
+    d.setDate(d.getDate() + 1);
+  }
+  return h('div', { class: 'kid-days', style: { '--goal': (goal / top).toFixed(3) } }, bars);
+}
+
+/** A grown-up's view of one kid's progress, from what their phone shares. */
+export function kidProgress(m, online = []) {
+  const s = m.summary;
+  const total = s.total || 78;
+  const t = todayOf(m);
+  const old = !s.tables;
+  const checks = (s.checks || (s.lastCheck ? [s.lastCheck] : [])).slice().reverse();
+  return h('div', { class: 'stack-form kid-page' },
+    h('section', { class: 'card kid-head' },
+      h('span', { class: 'kid-av', 'aria-hidden': 'true' }, avatarOf(m)),
+      h('div', null,
+        h('h2', null, m.name),
+        h('p', { class: 'small muted' }, online.includes(m.memberId) ? '🟢 In the app now' : s.lastActive ? `Last active ${fmtAgo(s.lastActive)}` : 'Not active yet'),
+        h('p', { class: 'small' }, `Level ${s.level} · 🔥 ${plural(streakOf(m), 'day')} streak`))),
+    h('section', { class: 'card' },
+      h('h3', null, 'Today'),
+      statusChip(m),
+      h('p', { class: 'small muted' }, t.done ? 'Daily goal met. 🎉' : `${t.goal - t.correct} more right answers to reach today's goal.`)),
+    h('section', { class: 'card' },
+      h('h3', null, 'Last 14 days'),
+      fortnight(m),
+      h('p', { class: 'small muted' }, `Bars show right answers each day; the line is the daily goal (${s.goal || 40}).`)),
+    h('section', { class: 'card' },
+      h('h3', null, `🧠 ${s.memorized}/${total} facts memorized`),
+      old ? h('p', { class: 'small muted' }, 'Open the app on their device to share more detail here.')
+        : h('div', { class: 'kid-tables' }, s.tables.map((pct, i) => h('div', { class: `kid-table lv${Math.min(5, Math.floor(pct / 20))}` }, h('b', null, `${i + 1}s`), h('small', null, `${pct}%`)))),
+      s.practice?.length > 0 && h('div', null,
+        h('p', { class: 'small' }, 'Needs practice:'),
+        h('div', { class: 'kid-facts' }, s.practice.map(k => h('span', { class: 'chip' }, k.replace('x', ' × ')))))),
+    h('section', { class: 'card' },
+      h('h3', null, '🏅 Mastery Checks'),
+      checks.length
+        ? h('ol', { class: 'kid-checks' }, checks.map(c => h('li', null,
+          h('b', null, `#${c.seq}`),
+          h('span', null, fmtShortDate(c.start)),
+          h('span', null, c.reason ? 'Unfinished' : `⚡ ${c.instant}/${total}`),
+          h('span', { class: 'muted' }, c.asked ? `${Math.round((c.correct / c.asked) * 100)}% right` : ''))))
+        : h('p', { class: 'small muted' }, 'No Mastery Check yet. It\'s on their Home screen (about 5 minutes).'),
+      s.bestCheck != null && h('p', { class: 'small muted' }, `Best: ${s.bestCheck}/${total} instant.`)),
+    h('section', { class: 'card' },
+      h('h3', null, 'Games'),
+      h('div', { class: 'fam-stats' },
+        h('span', null, '👾 ', h('b', null, `${s.bosses}/12`), ' bosses beaten'),
+        s.blitzBest != null && h('span', null, '⚡ ', h('b', null, String(s.blitzBest)), ' best Blitz'),
+        s.answers != null && h('span', null, '✍️ ', h('b', null, String(s.answers)), ' answers', s.answers ? ` (${Math.round((s.correct / s.answers) * 100)}% right)` : ''),
+        s.duels && h('span', null, '⚔️ ', h('b', null, `${s.duels.won}/${s.duels.played}`), ' duels won'))));
 }
 
 /**
  * The full board. me: member ids on this device.
  */
-export function familyBoard({ board, fetchedAt, offline }, me = [], online = []) {
+export function familyBoard({ board, fetchedAt, offline }, me = [], online = [], onOpen = null) {
   const players = playersOf(board);
   const waiting = board.members.filter(m => m.role !== 'viewer' && !m.summary);
   const grownUps = board.members.filter(m => m.role === 'viewer');
@@ -70,7 +139,7 @@ export function familyBoard({ board, fetchedAt, offline }, me = [], online = [])
       h('span', { class: 'legend-item', role: 'listitem' }, h('i', { class: 'swatch st-none' }), 'No practice')),
     offline && h('p', { class: 'warn-box small' }, `📡 Offline — showing the last update${fetchedAt ? ` (${fmtAgo(fetchedAt)})` : ''}.`),
     players.length === 0 && h('p', { class: 'muted center' }, 'Nobody has practiced yet. Progress shows up here after the first round.'),
-    players.map(m => memberCard(m, me, online)),
+    players.map(m => memberCard(m, me, online, onOpen)),
     waiting.length > 0 && h('p', { class: 'muted small center' }, `Joined, no practice yet: ${waiting.map(m => m.name).join(', ')}`),
     grownUps.length > 0 && h('p', { class: 'muted small center' }, `👀 Watching: ${grownUps.map(m => m.name).join(', ')}`));
 }

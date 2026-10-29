@@ -1,12 +1,13 @@
-// Room-code races: phones connect directly to each other (WebRTC via PeerJS).
+// Room-code games: phones connect directly to each other (WebRTC via PeerJS).
 // The host's phone shows a 4-digit code; others type it to join. PeerJS's free
-// public server only introduces the phones; the race itself goes phone to phone
+// public server only introduces the phones; the game itself goes phone to phone
 // (through PeerJS's relay when networks don't allow a direct link). The host
-// runs the room: it relays progress and decides the results.
+// runs the room: it runs the game mode's referee (versus.js) on everyone's
+// answers and sends the game state to every phone.
 
 import { lsGet } from './store.js';
-import { newSeed, RACE_MAX_MS } from './race.js';
-import { BATTLE_MAX_MS, newFighters, applyMove, standing } from './battle.js';
+import { newSeed } from './race.js';
+import { modeOf, act, unfit } from './versus.js';
 
 const PEER_SCRIPT = new URL('./vendor/peerjs-1.5.5.min.js', import.meta.url).href;
 const PREFIX = 'ttq-race-';
@@ -68,13 +69,15 @@ function emitter() {
 
 const publicPlayers = players => players.map(({ conn, seen, ...p }) => p);
 
+// Only these answer fields reach the referee.
+const cleanEvent = e => ({ correct: !!e?.correct, fast: !!e?.fast, timeout: !!e?.timeout, heal: !!e?.heal, quit: !!e?.quit });
+
 /**
- * Host a room. me: { name, avatar }.
- * Room events: 'lobby' (players), 'start' ({ seed, startAt, kind }), 'progress' ({ id, n }),
- * 'hp' ({ fighters, last }) in battles, 'result' (players), 'closed' (reason).
- * kind is 'race' or 'battle'; in a battle the host keeps everyone's health.
+ * Host a room for a game mode (versus.js); me: { name, avatar }.
+ * Room events: 'lobby' (players), 'start' ({ seed, mode, st, startAt, players }),
+ * 'st' ({ st, fx }) after every answer, 'result' ({ mode, st, players }), 'closed' (reason).
  */
-export async function hostRoom(me) {
+export async function hostRoom(me, modeId = 'race') {
   const Peer = await loadPeer();
   let peer = null;
   let code = null;
@@ -82,60 +85,55 @@ export async function hostRoom(me) {
     code = String(Math.floor(1000 + Math.random() * 9000));
     const p = new Peer(PREFIX + code, peerOptions());
     try {
-      await waitFor(p, 'open', 'error', CONNECT_TIMEOUT_MS, 'Couldn\'t reach the live-race connector.');
+      await waitFor(p, 'open', 'error', CONNECT_TIMEOUT_MS, 'Couldn\'t reach the live-game connector.');
       peer = p;
     } catch (e) {
       p.destroy();
-      if (e?.type !== 'unavailable-id') throw new Error(e?.type === 'network' || e?.type === 'server-error' ? 'Couldn\'t reach the live-race connector. Check the internet connection.' : e.message);
+      if (e?.type !== 'unavailable-id') throw new Error(e?.type === 'network' || e?.type === 'server-error' ? 'Couldn\'t reach the live-game connector. Check the internet connection.' : e.message);
     }
   }
-  if (!peer) throw new Error('Couldn\'t get a race code. Try again.');
+  if (!peer) throw new Error('Couldn\'t get a game code. Try again.');
 
   const ev = emitter();
-  const players = [{ id: 'host', name: me.name, avatar: me.avatar, n: 0, wrong: 0, ms: null, done: false, dnf: false }];
+  const players = [{ id: 'host', name: me.name, avatar: me.avatar }];
   let state = 'lobby';
-  let race = null;
-  let fighters = null;
+  let selected = modeOf(modeId).id;
+  let game = null; // { seed, mode, startAt, st }
   let deadline = null;
-  const battle = () => race?.kind === 'battle';
 
   const send = (conn, msg) => { try { conn.open && conn.send(msg); } catch { /* gone */ } };
   const broadcast = msg => players.forEach(p => p.conn && send(p.conn, msg));
-  const lobby = () => { const list = publicPlayers(players); broadcast({ t: 'lobby', players: list, state }); ev.emit('lobby', list); };
+  const lobby = () => {
+    const list = publicPlayers(players);
+    broadcast({ t: 'lobby', players: list, state, mode: selected });
+    ev.emit('lobby', list);
+  };
   const result = (force = false) => {
     if (state !== 'running') return;
-    if (!force && (battle() ? standing(fighters).length > 1 : !players.every(p => p.done))) return;
+    if (!force && !modeOf(game.mode).over(game.st, Date.now() - game.startAt)) return;
     state = 'done';
     clearTimeout(deadline);
-    if (battle()) for (const p of players) Object.assign(p, fighters[p.id]);
-    const list = publicPlayers(players);
-    broadcast({ t: 'result', players: list });
-    ev.emit('result', list);
+    const msg = { mode: game.mode, st: game.st, players: publicPlayers(players) };
+    broadcast({ t: 'result', ...msg });
+    ev.emit('result', msg);
   };
-
-  // Battles: apply someone's move (or forfeit) and tell everyone the new health.
-  const battleMove = (id, move) => {
-    if (state !== 'running' || !battle() || !fighters[id]) return;
-    const at = Math.max(0, Date.now() - race.startAt);
-    const f = fighters[id];
-    let hit = null;
-    if (move === 'forfeit') {
-      if (f.ko == null) { Object.assign(f, { hp: 0, ko: at }); hit = { target: id, amount: 0 }; }
-    } else hit = applyMove(fighters, id, move, at);
-    if (!hit) return;
-    const msg = { t: 'hp', fighters, last: { from: id, move, ...hit } };
-    broadcast(msg);
-    ev.emit('hp', msg);
+  // Someone answered (or left): run the referee and tell everyone.
+  const play = (id, e) => {
+    if (state !== 'running') return;
+    const fx = act(modeOf(game.mode), game.st, id, e, Math.max(0, Date.now() - game.startAt));
+    if (!fx) return;
+    const msg = { st: game.st, fx: { from: id, ...fx } };
+    broadcast({ t: 'st', ...msg });
+    ev.emit('st', msg);
     result();
   };
   const drop = conn => {
     const i = players.findIndex(x => x.conn === conn);
     if (i < 0) return;
     if (state === 'running') {
-      Object.assign(players[i], { done: true, dnf: true, gone: true });
+      players[i].gone = true;
       delete players[i].conn;
-      battleMove(players[i].id, 'forfeit');
-      result();
+      play(players[i].id, { quit: true });
     } else players.splice(i, 1);
     lobby();
   };
@@ -159,22 +157,12 @@ export async function hostRoom(me) {
       if (msg.t === 'ping') return send(conn, { t: 'pong', t0: msg.t0 });
       if (msg.t === 'hello') {
         if (p) return;
-        if (state !== 'lobby' && state !== 'done') return send(conn, { t: 'full', reason: 'That race already started.' });
-        if (players.length >= MAX_PLAYERS) return send(conn, { t: 'full', reason: 'That race is full.' });
-        players.push({ id: conn.peer, conn, seen: Date.now(), name: String(msg.name || 'Player').slice(0, 20), avatar: msg.avatar, n: 0, wrong: 0, ms: null, done: false, dnf: false });
+        if (state === 'running') return send(conn, { t: 'full', reason: 'That game already started.' });
+        if (players.length >= MAX_PLAYERS) return send(conn, { t: 'full', reason: 'That game is full.' });
+        players.push({ id: conn.peer, conn, seen: Date.now(), name: String(msg.name || 'Player').slice(0, 20), avatar: msg.avatar });
         return lobby();
       }
-      if (!p || state !== 'running' || p.done) return;
-      if (msg.t === 'move') battleMove(p.id, String(msg.move));
-      if (msg.t === 'progress') {
-        Object.assign(p, { n: Number(msg.n) || 0, wrong: Number(msg.wrong) || 0 });
-        broadcast({ t: 'progress', id: p.id, n: p.n });
-        ev.emit('progress', { id: p.id, n: p.n });
-      }
-      if (msg.t === 'finish') {
-        Object.assign(p, { n: Number(msg.n) || 0, wrong: Number(msg.wrong) || 0, done: true, dnf: msg.ms == null, ms: msg.ms == null ? null : Number(msg.ms) });
-        result();
-      }
+      if (p && msg.t === 'ev') play(p.id, cleanEvent(msg.ev));
     });
     conn.on('close', () => drop(conn));
   });
@@ -185,37 +173,31 @@ export async function hostRoom(me) {
     isHost: true,
     on: ev.on,
     lastResult: ev.lastResult,
-    players: () => publicPlayers(players),
-    kind: () => race?.kind || 'race',
-    /** Start (or restart) a race or a battle for everyone in the room. */
-    start(kind = 'race') {
-      if (players.length < 2 || state === 'running') return;
-      state = 'running';
-      race = { seed: newSeed(), kind, startAt: Date.now() + START_DELAY_MS };
+    players: () => publicPlayers(players).filter(p => !p.gone),
+    mode: () => selected,
+    /** Pick the game the next start plays. */
+    select(id) {
+      selected = modeOf(id).id;
+      lobby();
+    },
+    /** Why the room can't start now, or null. */
+    blocked: () => unfit(modeOf(selected), players.filter(p => !p.gone).length),
+    /** Start (or restart) the selected game for everyone in the room. */
+    start() {
+      if (state === 'running') return;
       for (let i = players.length - 1; i > 0; i--) if (players[i].gone) players.splice(i, 1);
-      for (const p of players) {
-        Object.assign(p, { n: 0, wrong: 0, ms: null, done: false, dnf: false });
-        delete p.hp;
-        delete p.ko;
-      }
-      fighters = battle() ? newFighters(players.map(p => p.id)) : null;
-      broadcast({ t: 'start', seed: race.seed, kind, delay: START_DELAY_MS, players: publicPlayers(players) });
-      ev.emit('start', { seed: race.seed, kind, startAt: race.startAt, players: publicPlayers(players) });
-      // Close out the race even if someone's phone went quiet; a battle ends on time with the most health winning.
-      deadline = setTimeout(() => {
-        for (const p of players) if (!p.done) Object.assign(p, { done: true, dnf: !battle() });
-        result(true);
-      }, START_DELAY_MS + (battle() ? BATTLE_MAX_MS + 3000 : RACE_MAX_MS + 15000));
+      const mode = modeOf(selected);
+      if (unfit(mode, players.length)) return;
+      state = 'running';
+      game = { seed: newSeed(), mode: mode.id, startAt: Date.now() + START_DELAY_MS, st: mode.init(players.map(p => p.id)) };
+      const list = publicPlayers(players);
+      broadcast({ t: 'start', seed: game.seed, mode: game.mode, st: game.st, delay: START_DELAY_MS, players: list });
+      ev.emit('start', { seed: game.seed, mode: game.mode, st: game.st, startAt: game.startAt, players: list });
+      // Close out the game even if a phone went quiet (timed modes end here too).
+      deadline = setTimeout(() => result(true), START_DELAY_MS + mode.maxMs + 2500);
     },
-    move(m) { battleMove('host', m); },
-    progress(n, wrong) {
-      Object.assign(players[0], { n, wrong });
-      broadcast({ t: 'progress', id: 'host', n });
-    },
-    finish({ correct, wrong, ms }) {
-      Object.assign(players[0], { n: correct, wrong, ms: ms ?? null, done: true, dnf: ms == null });
-      result();
-    },
+    /** The host's own answers. */
+    event(e) { play('host', cleanEvent(e)); },
     close() {
       broadcast({ t: 'closed', reason: 'The host left.' });
       clearTimeout(deadline);
@@ -229,20 +211,20 @@ export async function hostRoom(me) {
 export async function joinRoom(code, me) {
   const Peer = await loadPeer();
   const peer = new Peer(peerOptions());
-  await waitFor(peer, 'open', 'error', CONNECT_TIMEOUT_MS, 'Couldn\'t reach the live-race connector.').catch(e => {
+  await waitFor(peer, 'open', 'error', CONNECT_TIMEOUT_MS, 'Couldn\'t reach the live-game connector.').catch(e => {
     peer.destroy();
-    throw new Error(e?.type === 'network' || e?.type === 'server-error' ? 'Couldn\'t reach the live-race connector. Check the internet connection.' : e.message);
+    throw new Error(e?.type === 'network' || e?.type === 'server-error' ? 'Couldn\'t reach the live-game connector. Check the internet connection.' : e.message);
   });
   const conn = peer.connect(PREFIX + code, { reliable: true });
   const ev = emitter();
   let players = [];
   let rtt = 0;
-  let kind = 'race';
+  let mode = 'race';
   try {
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Couldn\'t connect to that phone. Check the code, and try both phones on the same Wi-Fi.')), CONNECT_TIMEOUT_MS);
       conn.once('open', () => { clearTimeout(timer); resolve(); });
-      peer.once('error', e => { clearTimeout(timer); reject(new Error(e?.type === 'peer-unavailable' ? `There's no race with the code ${code}.` : 'Couldn\'t connect to that phone.')); });
+      peer.once('error', e => { clearTimeout(timer); reject(new Error(e?.type === 'peer-unavailable' ? `There's no game with the code ${code}.` : 'Couldn\'t connect to that phone.')); });
     });
   } catch (e) {
     peer.destroy();
@@ -268,16 +250,22 @@ export async function joinRoom(code, me) {
     heard = Date.now();
     switch (msg.t) {
       case 'pong': rtt = Date.now() - msg.t0; break;
-      case 'lobby': players = msg.players; ev.emit('lobby', players); break;
+      case 'lobby':
+        players = msg.players;
+        mode = msg.mode || mode;
+        ev.emit('lobby', players);
+        break;
       case 'start':
         players = msg.players;
-        kind = msg.kind || 'race';
+        mode = msg.mode;
         // The host started its countdown when it sent this; allow for the trip here.
-        ev.emit('start', { seed: msg.seed, kind, startAt: Date.now() + msg.delay - rtt / 2, players });
+        ev.emit('start', { seed: msg.seed, mode, st: msg.st, startAt: Date.now() + msg.delay - rtt / 2, players });
         break;
-      case 'progress': ev.emit('progress', { id: msg.id === conn.peer ? 'host' : msg.id, n: msg.n }); break;
-      case 'hp': ev.emit('hp', { fighters: msg.fighters, last: msg.last }); break;
-      case 'result': players = msg.players; ev.emit('result', players); break;
+      case 'st': ev.emit('st', { st: msg.st, fx: msg.fx }); break;
+      case 'result':
+        players = msg.players;
+        ev.emit('result', { mode: msg.mode, st: msg.st, players });
+        break;
       case 'full': end(msg.reason); peer.destroy(); break;
       case 'closed': end(msg.reason); break;
       default:
@@ -294,11 +282,9 @@ export async function joinRoom(code, me) {
     myId: peer.id,
     on: ev.on,
     lastResult: ev.lastResult,
-    players: () => players,
-    kind: () => kind,
-    progress(n, wrong) { send({ t: 'progress', n, wrong }); },
-    move(m) { send({ t: 'move', move: m }); },
-    finish({ correct, wrong, ms }) { send({ t: 'finish', n: correct, wrong, ms: ms ?? null }); },
+    players: () => players.filter(p => !p.gone),
+    mode: () => mode,
+    event(e) { send({ t: 'ev', ev: e }); },
     close() { ended = true; stopWatch(); setTimeout(() => peer.destroy(), 200); },
   };
 }

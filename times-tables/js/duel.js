@@ -1,69 +1,63 @@
 // Duel: two players on one phone or iPad, face to face. Each half of the screen
 // has its own question and keypad (the top half is upside down for the player
-// across the table). Same questions in the same order for both; first to 15
-// correct wins; a wrong answer locks that player's keypad for 1.5 s. In a battle
-// (battle.js) each side has a health bar instead, and right answers attack.
+// across the table). Any Versus mode (versus.js) can be played this way: both
+// halves get the same questions in the same order, and the mode's referee
+// decides the rest.
 
-import { h } from './util.js';
-import { RACE_TARGET, PENALTY_MS, raceStream, newSeed, fmtRace } from './race.js';
+import { h, keypadKeys } from './util.js';
+import { raceStream, newSeed, fmtRace } from './race.js';
+import { PENALTY_MS, act, laneInfo, verdictTitle } from './versus.js';
 import { sfx, music } from './sfx.js';
 import { confetti, shake } from './fx.js';
-import { MAX_HP, BATTLE_MAX_MS, moveFor, newFighters, applyMove, moveText, potions, potionLabel } from './battle.js';
-
-const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'del', '0', 'ok'];
 
 /**
- * players: [{ name, avatar }] (index 0 = bottom, 1 = top).
+ * players: [{ name, avatar, keypad }] (index 0 = bottom, 1 = top); mode: from versus.js.
  * onAnswer(index, q, result) lets the caller record answers for real players.
- * battle: health bars instead of a race to 15.
- * Resolves with { winner, stats: [{ correct, wrong, ms, hp }], quit }.
+ * Resolves with { winners: [index], title, st, stats: [{ correct, wrong }], quit, rematch }.
  */
-export function runDuel({ players, onAnswer, battle = false }) {
+export function runDuel({ players, mode, onAnswer }) {
   return new Promise(resolve => {
     const seed = newSeed();
-    const fighters = newFighters(['0', '1']);
+    const st = mode.init(['0', '1'], { duel: true });
+    const people = Object.fromEntries(players.map((p, i) => [String(i), p]));
     let startedAt = 0;
     let pausedAt = 0;
     let done = false;
     let raf = 0;
+    const at = () => (startedAt ? (pausedAt || Date.now()) - startedAt : 0);
     const sides = players.map((p, i) => makeSide(p, i));
 
-    const clock = h('b', { class: 'duel-clock' }, '0.0s');
+    const clock = h('b', { class: 'duel-clock' }, '');
     const overlay = h('div', { class: 'duel-overlay', hidden: true });
-    const el = h('div', { class: `screen duel${battle ? ' battle' : ''}` },
+    const el = h('div', { class: `screen duel mode-${mode.id}` },
       sides[1].el,
       h('div', { class: 'duel-mid' },
-        h('button', { class: 'g-quit', type: 'button', 'aria-label': 'Stop the duel', onclick: () => end(null, true) }, '✕'),
-        h('span', { class: 'duel-vs' }, 'VS'),
+        h('button', { class: 'g-quit', type: 'button', 'aria-label': 'Stop the duel', onclick: () => end(true) }, '✕'),
+        h('span', { class: 'duel-vs' }, `${mode.icon} VS`),
         clock),
       sides[0].el,
       overlay);
 
     function makeSide(p, i) {
-      const stream = raceStream(seed);
-      const s = { p, i, stream, q: null, input: '', correct: 0, wrong: 0, lockUntil: 0, t0: 0, combo: 0 };
-      const fill = h('i');
-      s.score = h('b', null, battle ? `❤️ ${MAX_HP}` : `0/${RACE_TARGET}`);
-      if (battle) {
-        s.potionBtn = h('button', { class: 'potion-btn', type: 'button' }, potionLabel({ count: 1 }));
-        s.pot = potions(st => {
-          s.potionBtn.textContent = potionLabel(st);
-          s.potionBtn.classList.toggle('armed', st.armed && st.count > 0);
-          s.potionBtn.disabled = st.count === 0;
-        });
-        s.potionBtn.addEventListener('pointerdown', e => {
-          e.preventDefault();
-          if (done || !startedAt || pausedAt) return;
-          s.pot.toggle();
-          sfx.coin();
-        });
-      }
+      const s = { p, i, id: String(i), stream: raceStream(seed), q: null, input: '', correct: 0, wrong: 0, lockUntil: 0, t0: 0, limit: 0, combo: 0, asking: false, armed: false };
+      s.fill = h('i');
+      s.score = h('b', { class: 'duel-score' });
       s.qEl = h('div', { class: 'duel-q' });
       s.ansEl = h('div', { class: 'duel-ans empty' }, '?');
       s.msg = h('div', { class: 'duel-msg' });
-      s.fill = fill;
+      s.timer = h('i');
+      if (mode.potions) {
+        s.potionBtn = h('button', { class: 'potion-btn', type: 'button' });
+        s.potionBtn.addEventListener('pointerdown', e => {
+          e.preventDefault();
+          if (done || !startedAt || pausedAt || !st.p[s.id].potions) return;
+          s.armed = !s.armed;
+          sfx.coin();
+          showHead(s);
+        });
+      }
       const pad = h('div', { class: 'pad duel-pad' },
-        KEYS.map(k => h('button', { class: `key key-${k}`, type: 'button', 'data-k': k, 'aria-label': k === 'del' ? 'Delete' : k === 'ok' ? 'Enter' : k },
+        keypadKeys(p.keypad).map(k => h('button', { class: `key key-${k}`, type: 'button', 'data-k': k, 'aria-label': k === 'del' ? 'Delete' : k === 'ok' ? 'Enter' : k },
           k === 'del' ? '⌫' : k === 'ok' ? '✓' : k)));
       pad.addEventListener('pointerdown', e => {
         const b = e.target.closest('button');
@@ -73,13 +67,27 @@ export function runDuel({ players, onAnswer, battle = false }) {
         setTimeout(() => b.classList.remove('down'), 110);
         key(s, b.dataset.k);
       });
-      s.card = h('div', { class: 'duel-card' }, s.qEl, h('div', { class: 'duel-ans-row' }, '= ', s.ansEl), s.msg);
+      s.card = h('div', { class: 'duel-card' }, s.qEl, h('div', { class: 'duel-ans-row' }, '= ', s.ansEl), s.msg, h('div', { class: 'duel-timer' }, s.timer));
       s.el = h('section', { class: `duel-half side-${i}` },
         h('header', { class: 'duel-head' },
           h('span', { class: 'duel-av' }, p.avatar), h('b', { class: 'duel-name' }, p.name),
-          h('span', { class: 'duel-bar' }, fill), s.score, s.potionBtn),
+          h('span', { class: 'duel-bar' }, s.fill), s.score, s.potionBtn || ''),
         s.card, pad);
       return s;
+    }
+
+    function showHead(s) {
+      const lane = laneInfo(mode, st, people, s.id).find(l => l.me);
+      s.fill.style.width = `${Math.max(0, Math.min(1, lane.frac)) * 100}%`;
+      s.score.textContent = lane.text;
+      s.el.className = `duel-half side-${s.i} ${lane.cls}`;
+      if (s.potionBtn) {
+        const n = st.p[s.id].potions;
+        if (!n) s.armed = false;
+        s.potionBtn.textContent = s.armed ? '🧪 Heal ready!' : `🧪 Heal ×${n}`;
+        s.potionBtn.classList.toggle('armed', s.armed);
+        s.potionBtn.disabled = !n;
+      }
     }
 
     function ask(s) {
@@ -91,11 +99,14 @@ export function runDuel({ players, onAnswer, battle = false }) {
       s.ansEl.classList.add('empty');
       s.card.classList.remove('good', 'bad');
       s.msg.textContent = '';
+      s.limit = mode.limit(st, at());
+      s.timer.style.transform = 'scaleX(1)';
       s.t0 = performance.now();
+      s.asking = true;
     }
 
     function key(s, k) {
-      if (done || !startedAt || pausedAt || performance.now() < s.lockUntil) return;
+      if (done || !startedAt || pausedAt || !s.asking || performance.now() < s.lockUntil) return;
       if (k === 'del') s.input = s.input.slice(0, -1);
       else if (k === 'ok') { if (s.input) return submit(s); }
       else if (s.input.length < 3) s.input += k;
@@ -104,56 +115,26 @@ export function runDuel({ players, onAnswer, battle = false }) {
       if (k !== 'del' && k !== 'ok' && s.input.length >= String(s.q.answer).length) submit(s);
     }
 
-    function submit(s) {
+    function submit(s, timeout = false) {
       const ms = performance.now() - s.t0;
-      const given = Number(s.input);
-      const correct = given === s.q.answer;
-      onAnswer?.(s.i, s.q, { correct, fast: correct && ms < 3000, ms, given, timeout: false, combo: correct ? s.combo + 1 : 0 });
-      if (battle) return battleAnswer(s, { correct, fast: correct && ms < 3000 });
+      const given = timeout ? null : Number(s.input);
+      const correct = !timeout && given === s.q.answer;
+      const fast = correct && ms < 3000;
+      s.asking = false;
+      onAnswer?.(s.i, s.q, { correct, fast, ms, given, timeout, combo: correct ? s.combo + 1 : 0 });
+      const heal = !!(mode.potions && s.armed && correct);
+      if (heal) s.armed = false;
+      const fx = act(mode, st, s.id, { correct, fast, timeout, heal }, at()) || {};
+      sides.forEach(showHead);
+      s.msg.textContent = fx.text || '';
+      for (const id of fx.hit || []) if (id !== s.id) shake(sides[Number(id)].card);
       if (correct) {
         s.correct++;
         s.combo++;
-        sfx.correct(s.combo);
         s.card.classList.add('good');
-        s.score.textContent = `${s.correct}/${RACE_TARGET}`;
-        s.fill.style.width = `${(s.correct / RACE_TARGET) * 100}%`;
-        if (s.correct >= RACE_TARGET) return end(s.i);
-        s.lockUntil = performance.now() + 180;
-        setTimeout(() => !done && ask(s), 180);
-      } else {
-        s.wrong++;
-        s.combo = 0;
-        sfx.wrong();
-        shake(s.card);
-        s.card.classList.add('bad');
-        s.ansEl.textContent = String(s.q.answer);
-        s.msg.textContent = '⏳ +1.5s';
-        s.lockUntil = performance.now() + PENALTY_MS;
-        setTimeout(() => !done && ask(s), PENALTY_MS);
-      }
-    }
-
-    function showHp(s) {
-      const { hp, ko } = fighters[s.i];
-      s.fill.style.width = `${(hp / MAX_HP) * 100}%`;
-      s.score.textContent = ko != null ? '💥 KO' : `❤️ ${hp}`;
-      s.el.classList.toggle('hp-mid', hp <= 50);
-      s.el.classList.toggle('hp-low', hp <= 25);
-    }
-
-    function battleAnswer(s, res) {
-      const move = moveFor(res, s.pot.armed);
-      s.pot.answered(res.correct);
-      const hit = applyMove(fighters, String(s.i), move, Date.now() - startedAt);
-      const target = sides[Number(hit.target)];
-      sides.forEach(showHp);
-      s.msg.textContent = moveText(move, hit.amount);
-      if (res.correct) {
-        s.correct++;
-        s.combo++;
-        s.card.classList.add('good');
-        if (move === 'heal') sfx.coin();
-        else { sfx.hit(); shake(target.card); }
+        if (heal) sfx.coin();
+        else if (fx.hit?.length) sfx.hit();
+        else sfx.correct(s.combo);
       } else {
         s.wrong++;
         s.combo = 0;
@@ -162,25 +143,23 @@ export function runDuel({ players, onAnswer, battle = false }) {
         s.card.classList.add('bad');
         s.ansEl.textContent = String(s.q.answer);
       }
-      const out = sides.find(x => fighters[x.i].ko != null);
-      if (out) return end(1 - out.i);
-      const wait = res.correct ? 260 : PENALTY_MS;
+      if (mode.over(st, at())) return end();
+      const wait = correct ? 220 : PENALTY_MS;
       s.lockUntil = performance.now() + wait;
       setTimeout(() => !done && ask(s), wait);
     }
 
-    // A battle that runs out of time goes to whoever has more health.
-    const leader = () => {
-      const [a, b] = [fighters[0].hp, fighters[1].hp];
-      return a !== b ? (a > b ? 0 : 1) : sides[1].correct > sides[0].correct ? 1 : 0;
-    };
-
     function tick() {
       if (done) return;
       if (startedAt && !pausedAt) {
-        const el = Date.now() - startedAt;
-        clock.textContent = fmtRace(el);
-        if (battle && el > BATTLE_MAX_MS) return end(leader());
+        clock.textContent = mode.clock ? mode.clock(at()) : fmtRace(at());
+        if (mode.over(st, at())) return end();
+        for (const s of sides) {
+          if (!s.asking) continue;
+          const el = performance.now() - s.t0;
+          s.timer.style.transform = `scaleX(${Math.max(0, 1 - el / s.limit)})`;
+          if (el >= s.limit) submit(s, true);
+        }
       }
       raf = requestAnimationFrame(tick);
     }
@@ -223,40 +202,45 @@ export function runDuel({ players, onAnswer, battle = false }) {
     const noScroll = e => e.preventDefault();
     el.addEventListener('touchmove', noScroll, { passive: false });
 
-    function end(winner, quit = false) {
+    function end(quit = false) {
       if (done) return;
       done = true;
       cancelAnimationFrame(raf);
       document.removeEventListener('visibilitychange', onVis);
       music.stop();
-      const ms = startedAt ? Date.now() - startedAt : 0;
-      const stats = sides.map(s => ({ correct: s.correct, wrong: s.wrong, ms, hp: fighters[s.i].hp }));
-      if (quit) {
+      const stats = sides.map(s => ({ correct: s.correct, wrong: s.wrong }));
+      const finish = extra => {
         document.documentElement.classList.remove('in-game');
-        return resolve({ winner: null, stats, quit: true });
-      }
-      sfx.win();
-      confetti(140);
-      const banner = s => h('div', { class: `duel-result ${s.i === winner ? 'won' : 'lost'} side-${s.i}` },
-        h('div', { class: 'duel-result-emoji' }, s.i === winner ? '🏆' : '😅'),
-        h('b', null, s.i === winner ? `${s.p.name} wins!` : 'So close!'),
-        h('small', null, battle ? (fighters[s.i].ko != null ? '💥 Knocked out' : `❤️ ${fighters[s.i].hp} left`) : `${s.correct}/${RACE_TARGET} · ${fmtRace(ms)}`));
+        resolve({ ...result, ...extra });
+      };
+      const winners = mode.verdict(st).winners.map(Number);
+      const result = { winners, title: verdictTitle(mode, st, Object.fromEntries(players.map((p, i) => [String(i), p.name])), null), st, stats, quit };
+      if (quit) return finish();
+      if (winners.length) { sfx.win(); confetti(140); } else sfx.slow();
+      const banner = s => {
+        const won = winners.includes(s.i);
+        return h('div', { class: `duel-result ${won ? 'won' : 'lost'} side-${s.i}` },
+          h('div', { class: 'duel-result-emoji' }, won ? '🏆' : winners.length ? '😅' : '🤝'),
+          h('b', null, won ? `${s.p.name} wins!` : winners.length ? 'So close!' : 'It\'s a draw!'),
+          h('small', null, mode.score(st, s.id)));
+      };
       overlay.hidden = false;
       overlay.classList.add('final');
       overlay.replaceChildren(
         banner(sides[1]),
         h('div', { class: 'duel-result-buttons' },
-          h('button', { class: 'btn btn-primary', type: 'button', onclick: () => { document.documentElement.classList.remove('in-game'); resolve({ winner, stats, quit: false, rematch: true }); } }, '🔁 Rematch'),
-          h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => { document.documentElement.classList.remove('in-game'); resolve({ winner, stats, quit: false }); } }, 'Done')),
+          h('button', { class: 'btn btn-primary', type: 'button', onclick: () => finish({ rematch: true }) }, '🔁 Rematch'),
+          h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => finish() }, 'Done')),
         banner(sides[0]));
     }
 
     document.getElementById('app').replaceChildren(el);
     document.documentElement.classList.add('in-game');
+    sides.forEach(showHead);
     tick();
     countdown(() => {
       startedAt = Date.now();
-      music.play(battle ? 'battle' : 'race');
+      music.play(mode.music);
       sides.forEach(ask);
     });
   });
