@@ -1,0 +1,976 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#10141c" media="(prefers-color-scheme: dark)">
+<meta name="format-detection" content="telephone=no">
+<title>소리 내어 읽기</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&family=IBM+Plex+Sans+KR:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout: passage picker on top, reader on the left, word card / results / progress on the right. */
+:root{
+  --bg:#eef1f5; --surface:#ffffff; --ink:#17202f; --muted:#5a6478; --line:#d8dde6;
+  --accent:#2a4b9b; --accent-ink:#ffffff; --accent-soft:#e3e9f8;
+  --good:#17784a; --good-soft:#d9f1e4; --warn:#9a5c00; --warn-soft:#fbecd2; --bad:#b0281f; --bad-soft:#fadfdc;
+  --font-read:"Gowun Batang","AppleMyungjo","Nanum Myeongjo",serif;
+  --font-ui:"IBM Plex Sans KR",-apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#10141c; --surface:#181e29; --ink:#e7ebf2; --muted:#9aa4b8; --line:#2b3342;
+    --accent:#8aa8f0; --accent-ink:#0e1422; --accent-soft:#1f2c4a;
+    --good:#6fd39e; --good-soft:#163a29; --warn:#f0b85c; --warn-soft:#3b2c12; --bad:#ff8d83; --bad-soft:#41201d;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#10141c; --surface:#181e29; --ink:#e7ebf2; --muted:#9aa4b8; --line:#2b3342;
+  --accent:#8aa8f0; --accent-ink:#0e1422; --accent-soft:#1f2c4a;
+  --good:#6fd39e; --good-soft:#163a29; --warn:#f0b85c; --warn-soft:#3b2c12; --bad:#ff8d83; --bad-soft:#41201d;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+html{-webkit-text-size-adjust:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--font-ui);font-size:15px;line-height:1.5}
+h1,h2,h3{text-wrap:balance;margin:0}
+button{font:inherit;color:inherit;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+button:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.wrap{max-width:1180px;margin:0 auto;padding:20px 20px 40px;display:flex;flex-direction:column;gap:18px}
+.top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px}
+.top h1{font-family:var(--font-read);font-size:30px;font-weight:700;letter-spacing:-.01em}
+.top .sub{color:var(--muted);font-size:14px}
+.pills{display:flex;gap:8px;flex-wrap:wrap}
+.pill{background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:4px 12px;font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
+.pill b{color:var(--ink);font-weight:600}
+.banner{border-radius:10px;padding:12px 14px;font-size:14px;border:1px solid var(--warn);background:var(--warn-soft);color:var(--ink)}
+.banner[hidden]{display:none}
+.banner code{font-size:13px;background:var(--surface);padding:1px 5px;border-radius:4px;border:1px solid var(--line)}
+
+.passages{display:grid;grid-template-columns:repeat(auto-fill,minmax(172px,1fr));gap:10px}
+.pcard{text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px;cursor:pointer;display:flex;flex-direction:column;gap:2px}
+.pcard:hover{border-color:var(--accent)}
+.pcard[aria-pressed="true"]{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent);background:var(--accent-soft)}
+.pcard .lv{font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--accent);text-transform:uppercase}
+.pcard .kt{font-family:var(--font-read);font-size:18px;font-weight:700}
+.pcard .et{font-size:12.5px;color:var(--muted)}
+.pcard .best{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;margin-top:4px}
+.pcard .best b{color:var(--good)}
+
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:18px;align-items:start}
+@media (max-width:900px){.layout{grid-template-columns:1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px}
+.card h2{font-size:13px;font-weight:600;color:var(--muted);letter-spacing:.04em;text-transform:uppercase;margin-bottom:10px}
+.reader{display:flex;flex-direction:column;gap:16px;padding:22px}
+.rhead{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
+.rhead h3{font-family:var(--font-read);font-size:24px}
+.rhead .meta{color:var(--muted);font-size:13px}
+.rhead h3 .en{font-family:var(--font-ui);font-weight:400;font-size:15px;color:var(--muted);margin-left:6px}
+.controls{display:flex;flex-direction:column;gap:10px}
+.actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.actions .btn[hidden]{display:none}
+.sheet-close{display:none}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:9px 16px;cursor:pointer;font-weight:500}
+.btn:hover{border-color:var(--accent)}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600;min-width:150px}
+.btn.primary.live{background:var(--bad);border-color:var(--bad);color:#fff}
+.btn.small{padding:5px 10px;font-size:13px}
+.rate{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+.rate input{width:90px;accent-color:var(--accent)}
+.timer{margin-left:auto;display:flex;align-items:center;gap:8px;font-variant-numeric:tabular-nums;font-size:26px;font-weight:600}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--line)}
+.dot.on{background:var(--bad);animation:pulse 1.2s infinite}
+@keyframes pulse{50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.dot.on{animation:none}}
+.status{font-size:13.5px;color:var(--muted);min-height:1.4em}
+
+.text{font-family:var(--font-read);font-size:26px;line-height:2.05;word-break:keep-all;padding:6px 2px}
+.w{background:none;border:0;padding:0 .06em;margin:0;border-radius:4px;cursor:pointer;font-family:inherit;font-size:inherit;line-height:inherit;transition:background-color .15s}
+.w:hover{background:var(--accent-soft)}
+.w.read{background:var(--good-soft);color:var(--good)}
+.w.skip{background:var(--warn-soft)}
+.w.missed{background:var(--bad-soft);text-decoration:underline wavy var(--bad);text-underline-offset:6px}
+.w.current{box-shadow:inset 0 -3px 0 var(--accent)}
+.w.tts{background:var(--accent-soft);color:var(--accent)}
+.w.sel{outline:2px solid var(--accent);outline-offset:1px}
+.heard{font-size:13px;color:var(--muted);border-top:1px dashed var(--line);padding-top:10px;min-height:2em}
+.heard span{color:var(--ink)}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--muted)}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-2px;margin-right:5px}
+
+.grammar details{border-top:1px solid var(--line);padding:8px 0}
+.grammar details:last-child{border-bottom:1px solid var(--line)}
+.grammar summary{cursor:pointer;font-weight:600;font-family:var(--font-read);font-size:17px}
+.grammar summary span{font-family:var(--font-ui);font-weight:400;color:var(--muted);font-size:13px;margin-left:8px}
+.grammar p{margin:6px 0 0;font-size:14px}
+.grammar .ex{font-family:var(--font-read);font-size:15.5px;color:var(--accent)}
+
+.side{display:flex;flex-direction:column;gap:14px}
+.wordcard .wk{font-family:var(--font-read);font-size:30px;font-weight:700;line-height:1.2}
+.wordcard .pr{color:var(--muted);font-family:var(--font-read);font-size:16px;margin-left:6px}
+.wordcard .wm{font-size:17px;font-weight:600;margin-top:6px}
+.wordcard .wb{font-size:14px;color:var(--muted);margin-top:4px;font-family:var(--font-ui)}
+.wordcard .row{display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap}
+.muted{color:var(--muted)} .small{font-size:13px}
+
+.big{display:flex;align-items:baseline;gap:8px}
+.big .n{font-size:44px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1}
+.big .u{color:var(--muted);font-size:14px}
+.delta{font-size:13px;font-weight:600;border-radius:999px;padding:2px 8px}
+.delta.up{background:var(--good-soft);color:var(--good)} .delta.down{background:var(--bad-soft);color:var(--bad)}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+.stat{border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.stat .l{font-size:12px;color:var(--muted)} .stat .v{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.chip{border:1px solid var(--bad);background:var(--bad-soft);color:var(--ink);border-radius:999px;padding:2px 10px;font-family:var(--font-read);font-size:15px;cursor:pointer}
+.attempts{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums;margin-top:8px}
+.attempts th{text-align:left;color:var(--muted);font-weight:500;border-bottom:1px solid var(--line);padding:4px 0}
+.attempts td{padding:4px 0;border-bottom:1px solid var(--line)}
+.attempts td:not(:first-child),.attempts th:not(:first-child){text-align:right}
+.spark{width:100%;height:auto;display:block;margin-top:4px}
+.words{list-style:none;margin:0;padding:0;max-height:280px;overflow:auto}
+.words li{display:flex;align-items:baseline;gap:8px;padding:6px 0;border-bottom:1px solid var(--line)}
+.words .k{font-family:var(--font-read);font-weight:700;font-size:16px;cursor:pointer;background:none;border:0;padding:0}
+.words .m{font-size:13px;color:var(--muted);flex:1}
+.words .x{background:none;border:0;color:var(--muted);cursor:pointer;font-size:13px}
+footer{color:var(--muted);font-size:12.5px;max-width:760px}
+
+/* Phones: passages scroll sideways, controls live in a bar at the bottom, the word card is a bottom sheet. */
+@media (max-width:700px){
+  .wrap{padding:14px max(14px,env(safe-area-inset-right)) calc(100px + env(safe-area-inset-bottom)) max(14px,env(safe-area-inset-left));gap:14px}
+  .top{gap:8px;align-items:center}
+  .top h1{font-size:22px}
+  .top .sub{display:none}
+  .pill{padding:3px 10px;font-size:12px}
+  .pcard{padding:8px 10px;min-width:0}
+  .pcard .kt{font-size:17px}
+  .pcard .et,.pcard .best{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pcard .best{margin-top:2px}
+  .rhead .meta{font-size:12px}
+  .status{font-size:13px}
+  .passages{grid-auto-flow:column;grid-auto-columns:minmax(150px,44%);grid-template-columns:none;overflow-x:auto;scroll-snap-type:x mandatory;margin:0 -14px;padding:0 14px 4px;scroll-padding-left:14px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .passages::-webkit-scrollbar{display:none}
+  .pcard{scroll-snap-align:start}
+  .reader{padding:16px;gap:12px}
+  .rhead h3{font-size:20px}
+  .text{font-size:22px;line-height:1.95;padding:2px 0}
+  .actions{position:fixed;left:0;right:0;bottom:0;z-index:20;flex-wrap:nowrap;background:var(--surface);border-top:1px solid var(--line);
+    padding:10px max(14px,env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) max(14px,env(safe-area-inset-left));box-shadow:0 -6px 20px rgba(10,20,40,.10)}
+  .actions .btn{padding:12px 12px;white-space:nowrap}
+  .actions .btn.primary{flex:1 1 auto;min-width:0}
+  .timer{font-size:20px;gap:6px}
+  .wordcard{position:fixed;left:max(10px,env(safe-area-inset-left));right:max(10px,env(safe-area-inset-right));bottom:calc(82px + env(safe-area-inset-bottom));z-index:30;
+    box-shadow:0 10px 36px rgba(10,20,40,.28);transform:translateY(calc(100% + 140px));visibility:hidden;transition:transform .22s ease,visibility 0s .22s}
+  .wordcard.open{transform:none;visibility:visible;transition:transform .22s ease}
+  .wordcard h2{display:none}
+  .sheet-close{display:inline-flex;margin-left:auto}
+}
+@media (prefers-reduced-motion:reduce){.wordcard,.wordcard.open{transition:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>소리 내어 읽기</h1>
+      <div class="sub">Read-aloud speed trainer. Read the passage out loud; words turn green as they're heard.</div>
+    </div>
+    <div class="pills">
+      <span class="pill">Attempts <b id="statAttempts">0</b></span>
+      <span class="pill">Saved words <b id="statWords">0</b></span>
+    </div>
+  </header>
+
+  <div class="banner" id="banner" hidden></div>
+
+  <nav class="passages" id="passages" aria-label="Passages"></nav>
+
+  <div class="layout">
+    <section class="card reader" aria-label="Reader">
+      <div class="rhead">
+        <h3 id="pTitle"></h3>
+        <span class="meta" id="pMeta"></span>
+      </div>
+      <div class="controls">
+        <div class="actions" id="actions">
+          <button class="btn primary" id="btnRead" type="button">Start reading</button>
+          <button class="btn" id="btnListen" type="button">Listen first</button>
+          <button class="btn" id="btnRestart" type="button" hidden>Restart mic</button>
+          <div class="timer" aria-live="off"><span class="dot" id="dot"></span><span id="timer">0:00.0</span></div>
+        </div>
+        <label class="rate" for="rate">Voice speed <input id="rate" type="range" min="0.6" max="1.2" step="0.1" value="0.9"><span id="rateVal">0.9×</span></label>
+      </div>
+      <div class="status" id="status" aria-live="polite">Press Start reading, then read at a natural pace. The timer starts when you start speaking. Tap any word for its meaning.</div>
+      <div class="text" id="text" lang="ko"></div>
+      <div class="legend">
+        <span><i style="background:var(--good-soft);border:1px solid var(--good)"></i>Heard</span>
+        <span><i style="background:var(--warn-soft);border:1px solid var(--warn)"></i>Skipped so far</span>
+        <span><i style="background:var(--bad-soft);border:1px solid var(--bad)"></i>Not picked up</span>
+        <span><i style="box-shadow:inset 0 -3px 0 var(--accent);border:1px solid var(--line)"></i>Next word</span>
+      </div>
+      <div class="heard" id="heard">Heard: <span></span></div>
+      <div class="grammar">
+        <h2>Grammar in this passage</h2>
+        <div id="grammar"></div>
+      </div>
+    </section>
+
+    <aside class="side">
+      <section class="card wordcard" id="wordcard" aria-live="polite">
+        <h2>Word</h2>
+        <div class="muted small">Tap any word in the passage to see what it means and how it's built. Words you tap are saved below.</div>
+      </section>
+      <section class="card" id="results" hidden>
+        <h2>Last attempt</h2>
+        <div id="resultsBody"></div>
+      </section>
+      <section class="card" id="progress">
+        <h2>This passage</h2>
+        <div id="progressBody"></div>
+      </section>
+      <section class="card">
+        <h2>Saved words</h2>
+        <ul class="words" id="words"></ul>
+      </section>
+    </aside>
+  </div>
+
+  <footer>
+    Works in Safari on iPhone and in Chrome or Safari on a Mac. Speech recognition runs through your browser's speech service (Apple's in Safari, Google's in Chrome), so it needs an internet connection. Recognition isn't perfect: if a word stays red but you're sure you read it, tap it, hear it, and move on. Re-reading the same passage several times is the point, so watch your syllables per minute climb.
+  </footer>
+</div>
+
+<script>
+/* ---------------- Passages ---------------- */
+const PASSAGES = [
+{ id:"morning", level:1, title:"아침", en:"My morning", style:"해요체 · polite",
+  sentences:[
+    "저는 매일 아침 일곱 시에 일어나요.",
+    "먼저 물을 한 잔 마셔요.",
+    "그리고 샤워를 해요.",
+    "아침으로 보통 빵과 커피를 먹어요.",
+    "여덟 시에 집에서 나가요.",
+    "회사까지 버스를 타고 가요.",
+    "버스 안에서 음악을 들어요.",
+    "아침은 바쁘지만 기분이 좋아요."
+  ],
+  gloss:{
+    "저는":"I|저 (I, humble) + 는 (topic marker)",
+    "매일":"every day|每日",
+    "아침":"morning|",
+    "일곱":"seven|Native Korean number, used for hours: 일곱 시 = 7 o'clock",
+    "시에":"at … o'clock|시 (hour) + 에 (at, for time)",
+    "일어나요":"get up, wake up|일어나다 + -아요 (polite present)|이러나요",
+    "먼저":"first, before anything else|",
+    "물을":"water|물 + 을 (object marker)|무를",
+    "한":"one|하나 shortens to 한 before a counter",
+    "잔":"cup, glass|Counter for drinks",
+    "마셔요":"drink|마시다 + -어요 → 마셔요",
+    "그리고":"and, and then|Connects sentences",
+    "샤워를":"a shower|샤워 + 를 (object marker)",
+    "해요":"do|하다 → 해요 (polite present); 샤워를 하다 = take a shower",
+    "아침으로":"for breakfast|아침 + (으)로 (as, for)|아치므로",
+    "보통":"usually|普通",
+    "빵과":"bread and|빵 + 과 (and, after a consonant)",
+    "커피를":"coffee|커피 + 를 (object marker)",
+    "먹어요":"eat|먹다 + -어요 (polite present)|머거요",
+    "여덟":"eight|Native number; the final ㄼ is read as ㄹ|여덜",
+    "집에서":"from home|집 + 에서 (from; place of action)|지베서",
+    "나가요":"go out, leave|나가다 + -아요 → 나가요",
+    "회사까지":"to the office|회사 (會社, company) + 까지 (up to, as far as)",
+    "버스를":"the bus|버스 + 를 (object marker)",
+    "타고":"ride, and|타다 (to ride) + -고 (and, then)",
+    "가요":"go|가다 + -아요 → 가요",
+    "버스":"bus|",
+    "안에서":"inside|안 (inside) + 에서 (place of action)|아네서",
+    "음악을":"music|음악 (音樂) + 을 (object marker)|으마글",
+    "들어요":"listen|듣다 + -어요 → 들어요 (ㄷ becomes ㄹ before a vowel)|드러요",
+    "아침은":"mornings|아침 + 은 (topic marker)|아치믄",
+    "바쁘지만":"are busy, but|바쁘다 + -지만 (but)",
+    "기분이":"mood, feeling|기분 (氣分) + 이 (subject marker)|기부니",
+    "좋아요":"is good|좋다 + -아요; the ㅎ goes silent|조아요"
+  },
+  grammar:[
+    ["-아요 / -어요","Polite present ending for everyday speech (해요체). Stems ending in ㅏ or ㅗ take -아요, others take -어요, and 하다 becomes 해요.","일어나다 → 일어나요 · 먹다 → 먹어요"],
+    ["-고","Joins two actions: 'and' or 'and then'.","버스를 타고 가요 = I take the bus (and go)"],
+    ["-지만","'But' between two clauses.","바쁘지만 기분이 좋아요 = busy, but I feel good"],
+    ["에 vs 에서","에 marks a time or a destination. 에서 marks where an action happens, or 'from'.","일곱 시에 (at 7) · 집에서 나가요 (leave from home)"]
+  ]},
+{ id:"store", level:2, title:"편의점에서", en:"At the convenience store", style:"해요체 · polite",
+  sentences:[
+    "우리 집 앞에 작은 편의점이 있어요.",
+    "저는 일주일에 두세 번 거기에 가요.",
+    "어제는 퇴근하고 편의점에 들렀어요.",
+    "라면 하나와 우유를 샀어요.",
+    "계산할 때 직원이 봉투가 필요하냐고 물어봤어요.",
+    "저는 괜찮다고 했어요.",
+    "집에 와서 라면을 끓여 먹었어요.",
+    "간단했지만 맛있었어요."
+  ],
+  gloss:{
+    "우리":"our, my|Koreans say 우리 집 (our house) even for 'my house'",
+    "집":"house, home|",
+    "앞에":"in front of|앞 (front) + 에 (at)|아페",
+    "작은":"small|작다 + -은 (describing a noun)|자근",
+    "편의점이":"a convenience store|편의점 (便宜店) + 이 (subject marker)|펴니저미",
+    "있어요":"there is|있다 + -어요|이써요",
+    "저는":"I|저 (I, humble) + 는 (topic marker)",
+    "일주일에":"per week|일주일 (one week) + 에 (per)|일쭈이레",
+    "두세":"two or three|두 (2) + 세 (3)",
+    "번":"times|Counter for occurrences",
+    "거기에":"there|거기 (there) + 에 (to)",
+    "가요":"go|가다 + -아요 → 가요",
+    "어제는":"yesterday|어제 + 는 (topic / contrast)",
+    "퇴근하고":"after getting off work|퇴근하다 (退勤, leave work) + -고 (and then)",
+    "편의점에":"to the convenience store|편의점 + 에 (to)|펴니저메",
+    "들렀어요":"stopped by|들르다 + -었어요 (past); the ㅡ drops: 들르 + 어 → 들러|들러써요",
+    "라면":"ramyeon, instant noodles|",
+    "하나와":"one, and|하나 (one) + 와 (and, after a vowel)",
+    "우유를":"milk|우유 (牛乳) + 를 (object marker)",
+    "샀어요":"bought|사다 + -았어요 (past)|사써요",
+    "계산할":"(when) paying|계산하다 (計算, pay the bill) + -(으)ㄹ, used with 때",
+    "때":"when, the time|-(으)ㄹ 때 = when …",
+    "직원이":"the employee|직원 (職員, staff) + 이 (subject marker)|지궈니",
+    "봉투가":"a bag|봉투 (bag, envelope) + 가 (subject marker)",
+    "필요하냐고":"whether (I) needed|필요하다 (必要, to need) + -냐고 (quoting a question)|피료하냐고",
+    "물어봤어요":"asked|묻다 → 물어보다 (to ask) + -았어요 (past)|무러봐써요",
+    "괜찮다고":"that it was fine|괜찮다 (to be okay) + -다고 (quoting a statement)|괜찬타고",
+    "했어요":"said|하다 → 했어요 (past); -다고 하다 = to say that …|해써요",
+    "집에":"home (to)|집 + 에 (to)|지베",
+    "와서":"came, and then|오다 + -아서 → 와서 (and then, in sequence)",
+    "라면을":"the ramyeon|라면 + 을 (object marker)|라며늘",
+    "끓여":"boil|끓이다 + -어 → 끓여; 끓여 먹다 = cook and eat|끄려",
+    "먹었어요":"ate|먹다 + -었어요 (past)|머거써요",
+    "간단했지만":"was simple, but|간단하다 (簡單, simple) + -았지만|간단핻찌만",
+    "맛있었어요":"was delicious|맛있다 + -었어요 (past)|마시써써요"
+  },
+  grammar:[
+    ["-았- / -었-","Past tense. It goes between the stem and the ending.","사다 → 샀어요 (bought) · 먹다 → 먹었어요 (ate)"],
+    ["-(으)ㄹ 때","'When …', for the time something happens.","계산할 때 = when I was paying"],
+    ["-냐고 / -다고","Reported speech. -냐고 reports a question, -다고 reports a statement. Usually followed by 하다, 물어보다 or 말하다.","필요하냐고 물어봤어요 = asked if I needed one · 괜찮다고 했어요 = said I was fine"],
+    ["-아서 / -어서","'Did X and then Y', where Y follows from X.","집에 와서 = came home and (then)"]
+  ]},
+{ id:"kimchi", level:2, title:"엄마의 김치찌개", en:"Mom's kimchi stew", style:"한다체 · written",
+  sentences:[
+    "우리 엄마는 김치찌개를 정말 잘 만드신다.",
+    "어렸을 때 나는 학교에서 돌아오면 부엌에서 나는~2 냄새만 맡고도 오늘 저녁이 김치찌개라는 것을 바로 알 수 있었다.",
+    "엄마는 잘 익은 김치와 돼지고기를 넣고 오래 끓이신다.",
+    "나도 몇 번 따라 해 봤지만 그 맛이 나지 않았다.",
+    "엄마는 비결이 없다고 하시지만 나는 아직도 그 비결이 궁금하다."
+  ],
+  gloss:{
+    "우리":"our, my|",
+    "엄마는":"(my) mom|엄마 + 는 (topic marker)",
+    "김치찌개를":"kimchi stew|김치찌개 + 를 (object marker)",
+    "정말":"really|",
+    "잘":"well|",
+    "만드신다":"makes (respectful)|만들다 + -시- (honorific) + -ㄴ다 (written present); ㄹ drops before ㅅ",
+    "어렸을":"(when I) was young|어리다 (young) + -었- (past) + -을, used with 때|어려쓸",
+    "때":"when, the time|-(으)ㄹ 때 = when …",
+    "나는":"I|나 (I, plain) + 는 (topic marker)",
+    "학교에서":"from school|학교 (學校) + 에서 (from)",
+    "돌아오면":"when (I) came back|돌아오다 (return) + -면 (when, if)|도라오면",
+    "부엌에서":"from the kitchen|부엌 + 에서 (from)|부어케서",
+    "나는~2":"coming (from)|나다 (a smell or sound comes out) + -는 (describes 냄새). Not 'I' here!",
+    "냄새만":"just the smell|냄새 (smell) + 만 (only)",
+    "맡고도":"even just by smelling|맡다 (to smell) + -고도 (even after)|맏꼬도",
+    "오늘":"today|",
+    "저녁이":"dinner|저녁 + 이 (subject marker)|저녀기",
+    "김치찌개라는":"that it was kimchi stew|김치찌개 + (이)라는 ('that it is …')",
+    "것을":"the fact, the thing|것 + 을; -라는 것 = the fact that …|거슬",
+    "바로":"right away|",
+    "알":"know|알다 + -(으)ㄹ, used with 수 있다",
+    "수":"way, ability|-(으)ㄹ 수 있다 = can",
+    "있었다":"could|있다 + -었다 (written past); 알 수 있었다 = could tell|이썯따",
+    "익은":"ripe, well-fermented|익다 + -은 (describing a noun)|이근",
+    "김치와":"kimchi and|김치 + 와 (and)",
+    "돼지고기를":"pork|돼지 (pig) + 고기 (meat) + 를",
+    "넣고":"put in, and|넣다 + -고 (and)|너코",
+    "오래":"for a long time|",
+    "끓이신다":"boils (respectful)|끓이다 + -시- (honorific) + -ㄴ다|끄리신다",
+    "나도":"I too|나 + 도 (also)",
+    "몇":"a few|",
+    "번":"times|Counter for occurrences",
+    "따라":"following|따르다 → 따라; 따라 하다 = to copy, imitate",
+    "해":"do|하다 → 해, used with 보다",
+    "봤지만":"tried, but|보다 + -았지만; 해 보다 = try doing|봗찌만",
+    "그":"that|",
+    "맛이":"the taste|맛 + 이 (subject marker)|마시",
+    "나지":"come out|나다 + -지, used with 않다; 맛이 나다 = to have that taste",
+    "않았다":"did not|않다 + -았다; -지 않다 = not|아낟따",
+    "비결이":"a secret, a trick|비결 (祕訣) + 이 (subject marker)|비겨리",
+    "없다고":"that there is no|없다 + -다고 (quoting a statement)|업따고",
+    "하시지만":"says (respectful), but|하다 + -시- + -지만",
+    "아직도":"still|아직 + 도|아직또",
+    "궁금하다":"am curious|궁금하다, written present"
+  },
+  grammar:[
+    ["-ㄴ다 / -는다","Written plain style (한다체), used in diaries, essays, books and news. It means the same as -아요/-어요 without the politeness.","만들다 → 만든다 · 궁금하다 → 궁금하다"],
+    ["-시-","Honorific marker for the subject (here, Mom). It slots in before the ending.","끓이다 → 끓이신다 · 하다 → 하시지만"],
+    ["-(으)ㄹ 수 있다","Can, be able to.","알 수 있었다 = could tell"],
+    ["-아 / -어 보다","Try doing something.","따라 해 봤지만 = I tried copying it, but"],
+    ["나는 ≠ 나는","나는 can be 'I' + topic marker, or 나다 + -는, 'that comes out'. Context decides.","부엌에서 나는 냄새 = the smell coming from the kitchen"]
+  ]},
+{ id:"hike", level:3, title:"주말 등산", en:"A weekend hike", style:"한다체 · written",
+  sentences:[
+    "지난 주말에 친구들과 북한산에 다녀왔다.",
+    "아침 일찍 출발했는데도 등산로에는 벌써 사람이 많았다.",
+    "처음에는 길이 완만해서 이야기를 나누며 천천히 올라갔다.",
+    "하지만 정상에 가까워질수록 바위가 많아지고 경사도 가팔라졌다.",
+    "숨이 차서 몇 번이나 쉬어야 했다.",
+    "마침내 정상에 도착하자 서울 시내가 한눈에 내려다보였다.",
+    "힘들었지만 올라오길 잘했다는 생각이 들었다."
+  ],
+  gloss:{
+    "지난":"last, past|지나다 (to pass) + -ㄴ",
+    "주말에":"on the weekend|주말 (週末) + 에",
+    "친구들과":"with friends|친구 + 들 (plural) + 과 (with)",
+    "북한산에":"to Bukhansan|북한산 (a mountain in Seoul) + 에|부칸사네",
+    "다녀왔다":"went (and came back)|다녀오다 (make a trip) + -았다|다녀왇따",
+    "아침":"morning|",
+    "일찍":"early|",
+    "출발했는데도":"even though (we) set off|출발하다 (出發, depart) + -았는데도 (even though)|출발핸는데도",
+    "등산로에는":"on the hiking trail|등산로 (登山路) + 에는|등산노에는",
+    "벌써":"already|",
+    "사람이":"people|사람 + 이 (subject marker)|사라미",
+    "많았다":"were many|많다 + -았다|마낟따",
+    "처음에는":"at first|처음 + 에는|처으메는",
+    "길이":"the path|길 + 이 (subject marker)|기리",
+    "완만해서":"was gentle, so|완만하다 (緩慢, gentle slope) + -아서 (so)",
+    "이야기를":"conversation, story|이야기 + 를",
+    "나누며":"while sharing|나누다 + -며 (while, and); 이야기를 나누다 = to chat",
+    "천천히":"slowly|",
+    "올라갔다":"went up|올라가다 + -았다|올라갇따",
+    "하지만":"but, however|",
+    "정상에":"to the summit|정상 (頂上) + 에|정상에",
+    "가까워질수록":"the closer (we) got|가깝다 → 가까워지다 (get closer) + -(으)ㄹ수록 (the more …)",
+    "바위가":"rocks|바위 + 가 (subject marker)",
+    "많아지고":"became more, and|많다 → 많아지다 (increase) + -고|마나지고",
+    "경사도":"the slope, too|경사 (傾斜) + 도 (also)",
+    "가팔라졌다":"got steep|가파르다 (steep) → 가팔라지다 + -었다 (르 irregular)|가팔라젿따",
+    "숨이":"breath|숨 + 이; 숨이 차다 = be out of breath|수미",
+    "차서":"was short, so|차다 + -아서 (so)",
+    "몇":"a few, how many|",
+    "번이나":"(as many as) … times|번 + 이나 (emphasis: as many as)|버니나",
+    "쉬어야":"had to rest|쉬다 + -어야, used with 하다 (must)",
+    "했다":"did|-아/어야 했다 = had to|핻따",
+    "마침내":"finally|",
+    "도착하자":"as soon as (we) arrived|도착하다 (到着) + -자 (as soon as)|도차카자",
+    "서울":"Seoul|",
+    "시내가":"the city|시내 (市內, downtown) + 가",
+    "한눈에":"at a glance|한 (one) + 눈 (eye) + 에|한누네",
+    "내려다보였다":"could be seen below|내려다보다 (look down) → 내려다보이다 (be seen) + -었다|내려다보엳따",
+    "힘들었지만":"it was hard, but|힘들다 + -었지만|힘드럳찌만",
+    "올라오길":"coming up|올라오다 + -기를 (doing …) → -길",
+    "잘했다는":"that (I) did well|잘하다 + -았다는 ('that …'); -길 잘했다 = glad I did|잘핻따는",
+    "생각이":"a thought|생각 + 이 (subject marker)|생가기",
+    "들었다":"came to mind|들다 + -었다; 생각이 들다 = to think, feel|드럳따"
+  },
+  grammar:[
+    ["-는데도","'Even though'. The result is the opposite of what you'd expect.","일찍 출발했는데도 사람이 많았다 = even though we left early, it was crowded"],
+    ["-(으)ㄹ수록","'The more …, the more …'.","정상에 가까워질수록 = the closer we got to the top"],
+    ["-아 / -어지다","'Become': a change of state. Turns an adjective into 'getting …'.","많다 → 많아지다 · 가파르다 → 가팔라지다"],
+    ["-자","'As soon as' or 'when', in written narration.","도착하자 = as soon as we arrived"],
+    ["-길 잘했다","'Glad I did …' (short for -기를 잘했다).","올라오길 잘했다 = glad I came up"]
+  ]},
+{ id:"subway", level:3, title:"지하철에서", en:"On the subway", style:"한다체 · written",
+  sentences:[
+    "퇴근 시간의 지하철은 언제나 붐빈다.",
+    "사람들은 대부분 휴대폰을 보거나 이어폰을 끼고 있어서 서로 말을 거의 하지 않는다.",
+    "어제 나는 운 좋게 자리에 앉았는데, 다음 역에서 할머니 한 분이 타셨다.",
+    "나는 잠시 망설이다가 자리를 양보해 드렸다.",
+    "할머니께서는 고맙다고 하시면서 가방에서 귤 하나를 꺼내 주셨다.",
+    "작은 일이었지만 하루 종일 마음이 따뜻했다."
+  ],
+  gloss:{
+    "퇴근":"getting off work|퇴근 (退勤)",
+    "시간의":"of … time|시간 (時間) + 의 (of); 의 is often said like 에|시가네",
+    "지하철은":"the subway|지하철 (地下鐵) + 은 (topic marker)|지하처른",
+    "언제나":"always|",
+    "붐빈다":"is crowded|붐비다 + -ㄴ다 (written present)",
+    "사람들은":"people|사람 + 들 (plural) + 은|사람드른",
+    "대부분":"mostly|대부분 (大部分)",
+    "휴대폰을":"(their) phones|휴대폰 (mobile phone) + 을|휴대포늘",
+    "보거나":"look at, or|보다 + -거나 (or)",
+    "이어폰을":"earphones|이어폰 + 을|이어포늘",
+    "끼고":"wearing|끼다 (put in, wear earphones or rings) + -고; -고 있다 = ongoing state",
+    "있어서":"are (doing), so|있다 + -어서 (so, because)|이써서",
+    "서로":"each other|",
+    "말을":"words, talking|말 + 을|마를",
+    "거의":"almost; with a negative, hardly|거의 + negative = hardly|거이",
+    "하지":"do|하다 + -지, used with 않다",
+    "않는다":"not|않다 + -는다; -지 않다 = not|안는다",
+    "어제":"yesterday|",
+    "나는":"I|나 + 는 (topic marker)",
+    "운":"luck|운 (運)",
+    "좋게":"luckily (with 운)|좋다 + -게 (adverb); 운 좋게 = luckily|조케",
+    "자리에":"in a seat|자리 + 에",
+    "앉았는데":"sat, and then|앉다 + -았는데 (background: '…, and then')|안잔는데",
+    "다음":"next|",
+    "역에서":"at the station|역 (驛) + 에서|여게서",
+    "할머니":"a grandmother, an elderly woman|",
+    "한":"one|하나 shortens to 한 before a counter",
+    "분이":"person (respectful)|분 (respectful counter for people) + 이|부니",
+    "타셨다":"got on (respectful)|타다 + -시- + -었다 → 타셨다|타셛따",
+    "잠시":"for a moment|잠시 (暫時)",
+    "망설이다가":"hesitated, then|망설이다 + -다가 (was doing … then)|망서리다가",
+    "자리를":"(my) seat|자리 + 를",
+    "양보해":"yield, give way|양보하다 (讓步) + -아 → 양보해",
+    "드렸다":"did for (her) (humble)|드리다 + -었다; -아/어 드리다 = do something for an elder|드렫따",
+    "할머니께서는":"the grandmother|할머니 + 께서 (respectful subject marker) + 는",
+    "고맙다고":"that (she) was grateful|고맙다 + -다고 (quoting)|고맙따고",
+    "하시면서":"saying, while|하다 + -시- + -면서 (while)",
+    "가방에서":"from (her) bag|가방 + 에서 (from)",
+    "귤":"tangerine|",
+    "하나를":"one|하나 + 를",
+    "꺼내":"take out|꺼내다 + -어 → 꺼내",
+    "주셨다":"gave (respectful)|주다 + -시- + -었다; -아/어 주다 = do something for someone|주셛따",
+    "작은":"small|작다 + -은|자근",
+    "일이었지만":"was a (small) thing, but|일 (thing, event) + 이었지만|이리얻찌만",
+    "하루":"a day|",
+    "종일":"all day|종일 (終日); 하루 종일 = all day long",
+    "마음이":"(my) heart|마음 + 이|마으미",
+    "따뜻했다":"was warm|따뜻하다 + -았다|따뜨탣따"
+  },
+  grammar:[
+    ["-거나","'Or' between actions.","휴대폰을 보거나 이어폰을 끼고 = looking at phones or wearing earphones"],
+    ["-는데","Sets up the background before the main event: '…, and then' or '…, but'.","자리에 앉았는데, 할머니가 타셨다 = I'd sat down, and then a grandmother got on"],
+    ["-다가","Was doing X, then switched to Y.","망설이다가 양보해 드렸다 = hesitated, then gave up my seat"],
+    ["-아 드리다 / -아 주다","Do something for someone. 드리다 is the humble form, used toward elders.","양보해 드렸다 (I gave her my seat) · 꺼내 주셨다 (she took one out for me)"],
+    ["께서","Respectful subject marker, the honorific version of 이/가.","할머니께서는"]
+  ]},
+{ id:"library", level:4, title:"도서관 이용 증가", en:"Practice news item: libraries", style:"뉴스체 · news",
+  sentences:[
+    "최근 공공도서관을 찾는 시민이 꾸준히 늘고 있는 것으로 나타났다.",
+    "한 조사에 따르면 지난해 도서관 이용자 수는 전년보다 크게 증가했다.",
+    "전문가들은 그 이유로 무료 강좌와 다양한 문화 프로그램을 꼽았다.",
+    "특히 주말에는 가족 단위 방문객이 많아 어린이 열람실이 붐빈다고 한다.",
+    "도서관 측은 앞으로 운영 시간을 늘리고 전자책 서비스도 확대할 계획이라고 밝혔다."
+  ],
+  gloss:{
+    "최근":"recently|최근 (最近)",
+    "공공도서관을":"public libraries|공공 (公共, public) + 도서관 (圖書館, library) + 을|공공도서과늘",
+    "찾는":"who visit|찾다 (look for; visit) + -는 (describing)|찬는",
+    "시민이":"citizens|시민 (市民) + 이 (subject marker)|시미니",
+    "꾸준히":"steadily|꾸준하다 → 꾸준히|꾸주니",
+    "늘고":"increasing|늘다 (to grow) + -고, used with 있다 (ongoing)",
+    "있는":"(is) …ing|있다 + -는 (describing)|인는",
+    "것으로":"(to be) the case|것 + 으로; -는 것으로 나타나다 = 'was found to …'|거스로",
+    "나타났다":"was shown|나타나다 (appear) + -았다|나타낟따",
+    "한":"one, a certain|",
+    "조사에":"survey|조사 (調査) + 에",
+    "따르면":"according to|따르다 + -면; ~에 따르면 = according to ~",
+    "지난해":"last year|지난 (past) + 해 (year)",
+    "도서관":"library|도서관 (圖書館)",
+    "이용자":"users|이용 (利用, use) + 자 (者, person)",
+    "수는":"the number|수 (數) + 는",
+    "전년보다":"than the year before|전년 (前年) + 보다 (than)",
+    "크게":"greatly|크다 + -게 (adverb)",
+    "증가했다":"increased|증가하다 (增加) + -았다|증가핻따",
+    "전문가들은":"experts|전문가 (專門家) + 들 + 은|전문가드른",
+    "그":"that|",
+    "이유로":"as the reason|이유 (理由) + 로 (as)",
+    "무료":"free (of charge)|무료 (無料)",
+    "강좌와":"classes and|강좌 (講座, course, lecture) + 와",
+    "다양한":"various|다양하다 (多樣) + -ㄴ",
+    "문화":"culture|문화 (文化)",
+    "프로그램을":"programs|프로그램 + 을|프로그래믈",
+    "꼽았다":"named, pointed to|꼽다 (pick out) + -았다|꼬받따",
+    "특히":"especially|특히 (特-)|트키",
+    "주말에는":"on weekends|주말 + 에는|주마레는",
+    "가족":"family|가족 (家族)",
+    "단위":"unit|단위 (單位); 가족 단위 = as families",
+    "방문객이":"visitors|방문객 (訪問客) + 이|방문개기",
+    "많아":"are many, so|많다 + -아 (short for -아서)|마나",
+    "어린이":"children|",
+    "열람실이":"reading room|열람실 (閱覽室) + 이|열람시리",
+    "붐빈다고":"that it gets crowded|붐비다 + -ㄴ다고 (quoting)",
+    "한다":"(people) say|-다고 한다 = reportedly",
+    "측은":"side (officials)|측 (側) + 은; 도서관 측 = the library's officials|츠근",
+    "앞으로":"from now on|앞 + 으로|아프로",
+    "운영":"operating|운영 (運營)|우녕",
+    "시간을":"hours|시간 + 을|시가늘",
+    "늘리고":"extend, and|늘리다 (make longer, increase) + -고",
+    "전자책":"e-book|전자 (電子) + 책 (冊)",
+    "서비스도":"service, too|서비스 + 도",
+    "확대할":"will expand|확대하다 (擴大) + -(으)ㄹ (future, describing)|확때할",
+    "계획이라고":"that it is a plan|계획 (計劃) + 이라고 (quoting a noun)|계회기라고",
+    "밝혔다":"announced|밝히다 (reveal, announce) + -었다|발켣따"
+  },
+  grammar:[
+    ["-는 것으로 나타났다","News phrasing: 'it was found that …'.","늘고 있는 것으로 나타났다 = was found to be increasing"],
+    ["~에 따르면","'According to …'.","한 조사에 따르면 = according to one survey"],
+    ["-다고 한다","'Reportedly', 'they say'. Common in news.","붐빈다고 한다 = it is said to get crowded"],
+    ["-(으)ㄹ 계획이다","Plan to do something.","확대할 계획이라고 밝혔다 = announced plans to expand"],
+    ["Sino-Korean roots","News leans on 한자어. Spotting the roots helps you guess new words.","이용 (use) + 자 (person) = 이용자, user · 방문 (visit) + 객 (guest) = 방문객, visitor"]
+  ]}
+];
+
+/*CORE-START*/
+function isHangul(c){const k=c.charCodeAt(0);return k>=0xAC00&&k<=0xD7A3;}
+function decomp(c){const k=c.charCodeAt(0)-0xAC00;return [Math.floor(k/588),Math.floor((k%588)/28),k%28];}
+// Vowels speech recognizers often swap: ㅐ/ㅔ, ㅒ/ㅖ, ㅙ/ㅚ/ㅞ, ㅢ/ㅣ
+const VGROUP=(()=>{const g=[];for(let i=0;i<21;i++)g[i]=i;[[1,5],[3,7],[10,11,15],[19,20]].forEach(s=>s.forEach(v=>g[v]=s[0]));return g;})();
+function sim(a,b){
+  if(a===b)return 2;
+  const da=decomp(a),db=decomp(b);
+  if(da[0]===db[0]&&VGROUP[da[1]]===VGROUP[db[1]])return 1;
+  return -1;
+}
+// Semi-global alignment of passage syllables P against heard syllables R.
+// Unread passage at the end is free; extra speech at the start is free.
+function align(P,R){
+  const n=P.length,m=R.length,W=m+1;
+  const D=new Int32Array((n+1)*W),B=new Uint8Array((n+1)*W);
+  for(let j=1;j<=m;j++){D[j]=0;B[j]=2;}
+  for(let i=1;i<=n;i++){D[i*W]=-i;B[i*W]=1;}
+  for(let i=1;i<=n;i++){
+    const pi=P[i-1],row=i*W,prow=(i-1)*W;
+    for(let j=1;j<=m;j++){
+      let best=D[prow+j-1]+sim(pi,R[j-1]),b=0;
+      const up=D[prow+j]-1; if(up>best){best=up;b=1;}
+      const left=D[row+j-1]-1; if(left>best){best=left;b=2;}
+      D[row+j]=best;B[row+j]=b;
+    }
+  }
+  let bi=0,bs=-1e9;
+  for(let i=0;i<=n;i++){const v=D[i*W+m];if(v>=bs){bs=v;bi=i;}}
+  const matched=new Uint8Array(n);
+  let i=bi,j=m;
+  while(i>0&&j>0){
+    const b=B[i*W+j];
+    if(b===0){if(sim(P[i-1],R[j-1])>0)matched[i-1]=1;i--;j--;}
+    else if(b===1)i--; else j--;
+  }
+  return matched;
+}
+const NATIVE={1:"한",2:"두",3:"세",4:"네",5:"다섯",6:"여섯",7:"일곱",8:"여덟",9:"아홉",10:"열",11:"열한",12:"열두"};
+const SINO=["영","일","이","삼","사","오","육","칠","팔","구"];
+function sino(s){
+  const n=parseInt(s,10); if(!(n>0))return "영"; if(n>=10000)return s.split("").map(d=>SINO[+d]).join("");
+  const units=["","십","백","천"],d=String(n).split("").reverse();let out="";
+  for(let k=d.length-1;k>=0;k--){const v=+d[k];if(!v)continue;out+=(v===1&&k>0?"":SINO[v])+units[k];}
+  return out;
+}
+// Recognizers write numbers as digits; turn them back into Hangul so they can match.
+function normNumbers(t){
+  t=t.replace(/(\d+)\s*[~\-]\s*(\d+)\s*(번|개|명|잔|시|살|마리)/g,(m,a,b,c)=>(NATIVE[+a]||sino(a))+(NATIVE[+b]||sino(b))+c);
+  t=t.replace(/(\d+)\s*(번|개|명|잔|시|살|마리)/g,(m,a,c)=>(NATIVE[+a]||sino(a))+c);
+  return t.replace(/\d+/g,a=>sino(a));
+}
+function buildPassage(p){
+  p.tokens=[];
+  p.sentences.forEach((s,si)=>{
+    s.split(/\s+/).filter(Boolean).forEach(raw=>{
+      const display=raw.replace(/~\d+/,"");
+      const gk=raw.replace(/[.,!?"“”‘’]/g,"");
+      const key=[...display].filter(isHangul).join("");
+      const g=(p.gloss[gk]||"").split("|");
+      p.tokens.push({display,gk,key,syl:key.length,si,m:g[0]||"",b:g[1]||"",pr:g[2]||""});
+    });
+  });
+  p.syl=p.tokens.reduce((a,t)=>a+t.syl,0);
+  p.P=[];p.tokIdx=[];
+  p.tokens.forEach((t,i)=>{for(const c of t.key){p.P.push(c);p.tokIdx.push(i);}});
+  return p;
+}
+// Per-word status from the matched syllables.
+function scoreTokens(p,matched){
+  const cnt=new Array(p.tokens.length).fill(0);
+  for(let k=0;k<matched.length;k++)if(matched[k])cnt[p.tokIdx[k]]++;
+  const read=p.tokens.map((t,i)=>t.syl>0&&cnt[i]/t.syl>=0.5);
+  let frontier=-1;read.forEach((r,i)=>{if(r)frontier=i;});
+  return {read,frontier};
+}
+// Safari can report each result as the whole text so far; drop any result that the next one repeats.
+function joinResults(list){
+  const t=list.map(x=>({t:String(x.t||"").trim(),f:x.f})).filter(x=>x.t);
+  return t.filter((x,k)=>!(k+1<t.length&&t[k+1].t.startsWith(x.t))).map(x=>x.t).join(" ");
+}
+/*CORE-END*/
+
+PASSAGES.forEach(buildPassage);
+
+/* ---------------- Storage ---------------- */
+const STORE_KEY="kr-read-aloud-v1";
+function loadStore(){try{const s=JSON.parse(localStorage.getItem(STORE_KEY));if(s&&Array.isArray(s.attempts))return Object.assign({words:{},last:null},s);}catch(e){}return {attempts:[],words:{},last:null};}
+let store=loadStore();
+function saveStore(){try{localStorage.setItem(STORE_KEY,JSON.stringify(store));}catch(e){}}
+
+/* ---------------- State ---------------- */
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+const $=id=>document.getElementById(id);
+let cur=PASSAGES.find(p=>p.id===store.last)||PASSAGES[0];
+const IOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
+const NARROW=()=>window.matchMedia("(max-width:700px)").matches;
+const REDUCED=()=>window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+let tokEls=[],state="idle",rec=null,sid=0,committed="",sessionText="",tStart=null,tLast=null,frontier=-1,readFlags=[],timerId=null,autoT=null,selIdx=-1,ttsOn=false;
+
+function fmtTime(ms){const s=Math.max(0,ms)/1000;const m=Math.floor(s/60);return m+":"+(s%60).toFixed(1).padStart(4,"0");}
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+function attemptsFor(pid){return store.attempts.filter(a=>a.pid===pid);}
+function bestFor(pid){const a=attemptsFor(pid).filter(x=>x.full&&x.acc>=0.8);return a.length?Math.max(...a.map(x=>x.spm)):null;}
+
+/* ---------------- Rendering ---------------- */
+function renderPassageList(){
+  $("passages").innerHTML=PASSAGES.map(p=>{
+    const b=bestFor(p.id),n=attemptsFor(p.id).length;
+    return `<button class="pcard" type="button" data-id="${p.id}" aria-pressed="${p===cur}">
+      <span class="lv">Level ${p.level} · ${esc(p.style.split(" · ")[1])}</span>
+      <span class="kt">${esc(p.title)}</span><span class="et">${esc(p.en)}</span>
+      <span class="best">${b?`Best <b>${Math.round(b)}</b> syll/min · ${n} tries`:(n?`${n} tries`:`${p.syl} syllables · not read yet`)}</span></button>`;
+  }).join("");
+  $("passages").querySelectorAll(".pcard").forEach(el=>el.onclick=()=>{if(state==="listening")return;selectPassage(el.dataset.id);});
+  $("statAttempts").textContent=store.attempts.length;
+  $("statWords").textContent=Object.keys(store.words).length;
+}
+function renderText(){
+  const t=$("text");t.innerHTML="";tokEls=[];
+  let si=-1,sent=null;
+  cur.tokens.forEach((tok,i)=>{
+    if(tok.si!==si){si=tok.si;sent=document.createElement("span");sent.className="sent";t.appendChild(sent);if(si>0)t.insertBefore(document.createTextNode(" "),sent);}
+    else sent.appendChild(document.createTextNode(" "));
+    const b=document.createElement("button");b.type="button";b.className="w";b.textContent=tok.display;
+    b.onclick=()=>showWord(i);sent.appendChild(b);tokEls.push(b);
+  });
+}
+function renderGrammar(){
+  $("grammar").innerHTML=cur.grammar.map(g=>`<details><summary>${esc(g[0])}</summary><p>${esc(g[1])}</p><p class="ex">${esc(g[2])}</p></details>`).join("");
+}
+function selectPassage(id){
+  cur=PASSAGES.find(p=>p.id===id)||PASSAGES[0];store.last=cur.id;saveStore();
+  $("pTitle").innerHTML=`${esc(cur.title)} <span class="en">${esc(cur.en)}</span>`;
+  $("pMeta").textContent=`Level ${cur.level} · ${cur.style} · ${cur.tokens.length} words · ${cur.syl} syllables`;
+  renderText();renderGrammar();renderPassageList();renderProgress();
+  $("results").hidden=true;$("timer").textContent="0:00.0";$("heard").querySelector("span").textContent="";
+  selIdx=-1;readFlags=[];frontier=-1;
+}
+function paint(final){
+  tokEls.forEach((el,i)=>{
+    el.classList.remove("read","skip","missed","current");
+    if(readFlags[i])el.classList.add("read");
+    else if(i<frontier)el.classList.add(final?"missed":"skip");
+    if(!final&&state==="listening"&&i===frontier+1)el.classList.add("current");
+  });
+}
+function showWord(i){
+  const t=cur.tokens[i];if(!t)return;
+  if(selIdx>=0&&tokEls[selIdx])tokEls[selIdx].classList.remove("sel");
+  selIdx=i;tokEls[i].classList.add("sel");
+  const word=t.display.replace(/[.,!?"“”‘’]/g,"");
+  $("wordcard").innerHTML=`<h2>Word</h2>
+    <div><span class="wk" lang="ko">${esc(word)}</span>${t.pr?`<span class="pr">[${esc(t.pr)}]</span>`:""}</div>
+    <div class="wm">${esc(t.m||"(no note for this word)")}</div>
+    ${t.b?`<div class="wb" lang="ko">${esc(t.b)}</div>`:""}
+    <div class="row"><button class="btn small" type="button" id="hearWord"${state==="listening"?" disabled":""}>Hear it</button><span class="muted small">Saved to your word list</span><button class="btn small sheet-close" type="button" id="closeWord">Close</button></div>`;
+  $("hearWord").onclick=()=>speak(word);
+  $("closeWord").onclick=closeWord;
+  $("wordcard").classList.add("open");
+  if(t.m){store.words[cur.id+"|"+t.gk]={w:word,m:t.m,b:t.b,pid:cur.id,t:Date.now()};saveStore();renderWords();$("statWords").textContent=Object.keys(store.words).length;}
+}
+function closeWord(){
+  $("wordcard").classList.remove("open");
+  if(selIdx>=0&&tokEls[selIdx])tokEls[selIdx].classList.remove("sel");
+  selIdx=-1;
+}
+function renderWords(){
+  const list=Object.entries(store.words).sort((a,b)=>b[1].t-a[1].t);
+  $("words").innerHTML=list.length?list.map(([k,v])=>`<li><button class="k" type="button" data-k="${esc(k)}" lang="ko">${esc(v.w)}</button><span class="m">${esc(v.m)}</span><button class="x" type="button" data-del="${esc(k)}" aria-label="Remove ${esc(v.w)}">Remove</button></li>`).join("")
+    :`<li class="muted small">No words yet. Tap words in the passage that you don't know.</li>`;
+  $("words").querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{delete store.words[b.dataset.del];saveStore();renderWords();$("statWords").textContent=Object.keys(store.words).length;});
+  $("words").querySelectorAll("[data-k]").forEach(b=>b.onclick=()=>{if(state!=="listening")speak(store.words[b.dataset.k].w);});
+}
+function sparkline(vals){
+  const w=300,h=70,px=8,py=10,max=Math.max(...vals),min=Math.min(...vals),span=(max-min)||1;
+  const xs=vals.map((v,i)=>px+i*(w-2*px)/(vals.length-1)),ys=vals.map(v=>h-py-(v-min)/span*(h-2*py));
+  const line=xs.map((x,i)=>`${i?"L":"M"}${x.toFixed(1)},${ys[i].toFixed(1)}`).join("");
+  const area=line+`L${xs[xs.length-1].toFixed(1)},${h}L${xs[0].toFixed(1)},${h}Z`;
+  const lx=xs[xs.length-1],ly=ys[ys.length-1];
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" role="img" aria-label="Syllables per minute over your attempts">
+    <line x1="0" x2="${w}" y1="${h-py}" y2="${h-py}" stroke="var(--line)"/><line x1="0" x2="${w}" y1="${py}" y2="${py}" stroke="var(--line)" stroke-dasharray="3 3"/>
+    <path d="${area}" fill="var(--accent-soft)"/><path d="${line}" fill="none" stroke="var(--accent)" stroke-width="2"/>
+    <circle cx="${lx}" cy="${ly}" r="4" fill="var(--accent)"/></svg>
+    <div class="muted small" style="display:flex;justify-content:space-between"><span>low ${Math.round(min)}</span><span>high ${Math.round(max)} syll/min</span></div>`;
+}
+function renderProgress(){
+  const a=attemptsFor(cur.id);
+  if(!a.length){$("progressBody").innerHTML=`<p class="muted small" style="margin:0">No attempts yet. Read it a few times in a row: repeated reading is how decoding gets faster.</p>`;return;}
+  const vals=a.slice(-12).map(x=>x.spm);
+  $("progressBody").innerHTML=(vals.length>1?sparkline(vals):`<p class="muted small" style="margin:0">Read it again to see a trend.</p>`)+
+    `<table class="attempts"><thead><tr><th>When</th><th>Time</th><th>Syll/min</th><th>Heard</th></tr></thead><tbody>${
+      a.slice(-5).reverse().map(x=>`<tr><td>${new Date(x.date).toLocaleDateString(undefined,{month:"short",day:"numeric"})} ${new Date(x.date).toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"})}</td><td>${fmtTime(x.ms)}</td><td>${Math.round(x.spm)}${x.full?"":"*"}</td><td>${Math.round(x.acc*100)}%</td></tr>`).join("")
+    }</tbody></table>${a.some(x=>!x.full)?`<p class="muted small" style="margin:6px 0 0">* stopped before the end</p>`:""}`;
+}
+
+/* ---------------- Speech recognition ---------------- */
+function banner(html){const b=$("banner");if(!html){b.hidden=true;return;}b.innerHTML=html;b.hidden=false;}
+const STANDALONE=IOS&&navigator.standalone===true;
+const MIC_HELP=IOS
+  ?`Safari couldn't use the microphone. Tap <b>aA</b> in the address bar → Website Settings → Microphone → Allow, then try again. If it still fails, make sure Dictation is on (Settings → General → Keyboard → Enable Dictation).`
+  :`The microphone was blocked. Click the mic or site icon in the address bar, allow the microphone, then try again.`;
+function unsupportedMsg(){
+  if(STANDALONE)return `Speech recognition doesn't work when this page is opened from the Home Screen. Open it in <b>Safari</b> instead.`;
+  if(IOS)return `On iPhone, open this page in <b>Safari</b> to use read-aloud mode.`;
+  return `Speech recognition isn't available in this browser. Use <b>Chrome</b> or <b>Safari</b>.`;
+}
+function canListen(){return !!SR&&!STANDALONE;}
+
+function startReading(){
+  if(!canListen()){banner(unsupportedMsg());return;}
+  stopTTS();banner("");closeWord();
+  committed="";sessionText="";tStart=null;tLast=null;frontier=-1;readFlags=new Array(cur.tokens.length).fill(false);
+  state="listening";paint(false);
+  $("btnRead").textContent="Stop";$("btnRead").classList.add("live");
+  $("btnListen").hidden=true;$("btnRestart").hidden=false;$("dot").classList.add("on");
+  $("status").textContent="Listening… start reading whenever you're ready.";$("results").hidden=true;$("timer").textContent="0:00.0";
+  clearInterval(timerId);
+  timerId=setInterval(()=>{if(tStart)$("timer").textContent=fmtTime(performance.now()-tStart);},100);
+  if(!startSession()){banner("Couldn't start speech recognition. Reload the page and try again.");endListening(false);}
+}
+// One recognition session. Chrome keeps a continuous session going; Safari on iOS misbehaves in
+// continuous mode, so there it gets short sessions that restart by themselves after each pause.
+function startSession(){
+  const my=++sid;let r;
+  try{r=new SR();r.lang="ko-KR";r.continuous=!IOS;r.interimResults=true;r.maxAlternatives=1;}
+  catch(err){return false;}
+  r.onspeechstart=()=>{if(my===sid&&!tStart)tStart=performance.now();};
+  r.onresult=e=>{
+    if(my!==sid)return;
+    const list=[];for(let k=0;k<e.results.length;k++)list.push({t:e.results[k][0].transcript,f:e.results[k].isFinal});
+    sessionText=joinResults(list);
+    update(committed+" "+sessionText);
+  };
+  r.onerror=e=>{
+    if(my!==sid)return;
+    if(e.error==="not-allowed"||e.error==="service-not-allowed"){banner(MIC_HELP);endListening(false);}
+    else if(e.error==="network"){banner("Speech recognition needs an internet connection. Check your connection and try again.");endListening(false);}
+    else if(e.error==="audio-capture"){banner(IOS?"Safari couldn't get the microphone. End any call or recording that's using it and try again.":"No microphone was found. Check your input device in System Settings → Sound.");endListening(false);}
+    // "no-speech" and "aborted" just end the session; onend restarts it.
+  };
+  r.onend=()=>{
+    if(my!==sid)return;
+    committed+=" "+sessionText;sessionText="";
+    if(state!=="listening")return;
+    setTimeout(()=>{if(state==="listening"&&my===sid&&!startSession())micPaused();},IOS?150:0);
+  };
+  rec=r;
+  try{r.start();return true;}catch(err){return false;}
+}
+// Drop the current session (keeping what it heard) so a fresh one can start.
+function retireSession(){
+  sid++;committed+=" "+sessionText;sessionText="";
+  const old=rec;rec=null;if(old){try{old.abort();}catch(e){}}
+}
+function micPaused(){$("status").textContent="The mic paused. Tap Restart mic and keep reading.";}
+function restartMic(){
+  if(state!=="listening")return;
+  retireSession();
+  if(startSession())$("status").textContent="Mic restarted. Keep reading.";else micPaused();
+}
+function keepInView(el){
+  if(!el)return;
+  const r=el.getBoundingClientRect(),bar=$("actions").getBoundingClientRect().height||0;
+  if(r.bottom>window.innerHeight-bar-24||r.top<8)el.scrollIntoView({block:"center",behavior:REDUCED()?"auto":"smooth"});
+}
+function update(text){
+  const raw=text.replace(/\s+/g," ").trim();
+  $("heard").querySelector("span").textContent=raw.length>90?"…"+raw.slice(-90):raw;
+  const R=[...normNumbers(raw)].filter(isHangul);
+  if(!R.length)return;
+  if(!tStart)tStart=performance.now();
+  const s=scoreTokens(cur,align(cur.P,R));
+  readFlags=s.read;
+  const advanced=s.frontier>frontier;
+  if(advanced)tLast=performance.now();
+  frontier=s.frontier;
+  paint(false);
+  if(advanced&&NARROW())keepInView(tokEls[Math.min(frontier+1,tokEls.length-1)]);
+  const done=frontier>=cur.tokens.length-1;
+  $("status").textContent=done?"Got the last word. Wrapping up…":`Listening… ${frontier+1} of ${cur.tokens.length} words`;
+  clearTimeout(autoT);
+  if(done)autoT=setTimeout(()=>endListening(true),900);
+}
+function endListening(record){
+  if(state!=="listening")return;
+  state="done";sid++;clearInterval(timerId);clearTimeout(autoT);
+  const old=rec;rec=null;try{old&&old.abort();}catch(e){}
+  $("btnRead").textContent="Read again";$("btnRead").classList.remove("live");
+  $("btnListen").hidden=false;$("btnRestart").hidden=true;$("dot").classList.remove("on");
+  if(!record){paint(true);$("status").textContent="Stopped.";return;}
+  finish();
+}
+function finish(){
+  paint(true);
+  if(!tStart||frontier<0){$("status").textContent="I didn't hear any of the passage. Check your mic and try again.";$("timer").textContent="0:00.0";return;}
+  const end=tLast||performance.now(),ms=Math.max(1000,end-tStart);
+  const covered=frontier+1,total=cur.tokens.length;
+  const readCount=readFlags.slice(0,covered).filter(Boolean).length;
+  const sylCovered=cur.tokens.slice(0,covered).reduce((a,t)=>a+t.syl,0);
+  const spm=sylCovered/(ms/60000),acc=readCount/covered,full=covered>=total-1;
+  $("timer").textContent=fmtTime(ms);
+  const prev=attemptsFor(cur.id).slice(-1)[0];
+  const best=bestFor(cur.id);
+  if(covered>=4){store.attempts.push({pid:cur.id,date:Date.now(),ms,spm,acc,full,syl:sylCovered});saveStore();}
+  const missed=[];readFlags.slice(0,covered).forEach((r,i)=>{if(!r)missed.push(i);});
+  let delta="";
+  if(prev){const d=Math.round(spm-prev.spm);delta=`<span class="delta ${d>=0?"up":"down"}">${d>=0?"+":""}${d} vs last</span>`;}
+  const newBest=full&&acc>=0.8&&(best===null||spm>best);
+  $("results").hidden=false;
+  $("resultsBody").innerHTML=`<div class="big"><span class="n">${Math.round(spm)}</span><span class="u">syllables / min</span>${delta}</div>
+    ${newBest?`<p class="small" style="margin:6px 0 0;color:var(--good);font-weight:600">New best for this passage</p>`:""}
+    <div class="stats">
+      <div class="stat"><div class="l">Time</div><div class="v">${fmtTime(ms)}</div></div>
+      <div class="stat"><div class="l">Words heard</div><div class="v">${readCount}/${covered} · ${Math.round(acc*100)}%</div></div>
+    </div>
+    ${full?"":`<p class="small muted" style="margin:10px 0 0">You stopped at word ${covered} of ${total}, so speed counts only the part you read.</p>`}
+    ${missed.length?`<p class="small" style="margin:12px 0 0">Not picked up. Tap to check the meaning, then read the passage again:</p><div class="chips">${missed.map(i=>`<button class="chip" type="button" data-i="${i}" lang="ko">${esc(cur.tokens[i].display.replace(/[.,!?]/g,""))}</button>`).join("")}</div>`
+      :`<p class="small" style="margin:12px 0 0;color:var(--good)">Every word was picked up.</p>`}`;
+  $("resultsBody").querySelectorAll(".chip").forEach(c=>c.onclick=()=>showWord(+c.dataset.i));
+  $("status").textContent=full?"Done. Read it again right away and try to beat that number.":"Stopped early. Read again when you're ready.";
+  renderProgress();renderPassageList();
+  if(NARROW())$("results").scrollIntoView({block:"start",behavior:REDUCED()?"auto":"smooth"});
+}
+
+/* ---------------- Text to speech ---------------- */
+let koVoice=null;
+function pickVoice(){
+  if(!("speechSynthesis" in window))return;
+  const vs=speechSynthesis.getVoices().filter(v=>/^ko/i.test(v.lang));
+  koVoice=vs.find(v=>/Yuna|유나/.test(v.name))||vs.find(v=>/Google/.test(v.name))||vs[0]||null;
+}
+if("speechSynthesis" in window){pickVoice();speechSynthesis.onvoiceschanged=pickVoice;}
+function speak(text,onBoundary,onEnd){
+  if(!("speechSynthesis" in window)){banner("This browser can't speak text aloud.");return;}
+  if(speechSynthesis.speaking||speechSynthesis.pending)speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(text);u.lang="ko-KR";if(koVoice)u.voice=koVoice;u.rate=+$("rate").value;
+  if(onBoundary)u.onboundary=onBoundary;
+  u.onend=u.onerror=()=>{onEnd&&onEnd();};
+  speechSynthesis.speak(u);
+}
+function stopTTS(){if(ttsOn){ttsOn=false;try{speechSynthesis.cancel();}catch(e){}}$("btnListen").textContent="Listen first";tokEls.forEach(e=>e.classList.remove("tts"));}
+function listen(){
+  if(ttsOn){stopTTS();return;}
+  const parts=cur.tokens.map(t=>t.display);const starts=[];let pos=0;parts.forEach(p=>{starts.push(pos);pos+=p.length+1;});
+  ttsOn=true;$("btnListen").textContent="Stop audio";
+  speak(parts.join(" "),e=>{
+    let idx=0;for(let i=0;i<starts.length;i++)if(starts[i]<=e.charIndex)idx=i;
+    tokEls.forEach((el,i)=>el.classList.toggle("tts",i===idx));
+  },stopTTS);
+}
+
+/* ---------------- Wire up ---------------- */
+$("btnRead").onclick=()=>{if(state==="listening")endListening(true);else startReading();};
+$("btnListen").onclick=listen;
+$("btnRestart").onclick=restartMic;
+$("rate").oninput=()=>{$("rateVal").textContent=(+$("rate").value).toFixed(1)+"×";};
+if(!canListen())banner(unsupportedMsg()+" You can still tap words and use Listen first here.");
+selectPassage(cur.id);renderWords();
+</script>
+</body>
+</html>
